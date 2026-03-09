@@ -1,0 +1,252 @@
+import { PassThrough, type Readable } from 'node:stream';
+import { AppError, ExitCode } from '../errors.js';
+import type { Logger } from '../logging.js';
+
+export type VideoStreamInfo = {
+  index: number;
+  codec: 'H264';
+  width: number;
+  height: number;
+  framerateNum: number;
+  framerateDen: number;
+  stream: Readable;
+};
+
+export type AudioStreamInfo = {
+  index: number;
+  codec: 'OPUS';
+  sampleRate: number;
+  stream: Readable;
+};
+
+type PacketLike = {
+  streamIndex: number;
+  data?: Uint8Array;
+  pts?: bigint;
+  duration?: bigint;
+  timeBase: {
+    num: number;
+    den: number;
+  };
+  clone(): PacketLike;
+  free(): void;
+};
+
+function parseOpusPacketDuration(frame: Uint8Array): number {
+  const firstByte = frame[0] ?? 0;
+  const secondByte = frame[1] ?? 0;
+  const frameSizes = [
+    10, 20, 40, 60, 10, 20, 40, 60, 10, 20, 40, 60, 10, 20, 10, 20, 2.5, 5, 10, 20, 2.5, 5, 10, 20,
+    2.5, 5, 10, 20, 2.5, 5, 10, 20,
+  ];
+
+  const frameSize = (48_000 / 1000) * (frameSizes[firstByte >> 3] ?? 20);
+  const c = firstByte & 0b11;
+
+  if (c === 0) {
+    return frameSize;
+  }
+
+  if (c === 1 || c === 2) {
+    return frameSize * 2;
+  }
+
+  return frameSize * (secondByte & 0b11_1111);
+}
+
+export async function demuxNutStream(
+  input: NodeJS.ReadableStream,
+  logger: Logger
+): Promise<{ video: VideoStreamInfo; audio?: AudioStreamInfo }> {
+  const imported = (await import('node-av')) as {
+    Demuxer: {
+      open(
+        input: NodeJS.ReadableStream,
+        options: { format: string; bufferSize: number; options: Record<string, string> }
+      ): Promise<{
+        video(): {
+          index: number;
+          codecpar: {
+            codecId: number;
+            width?: number;
+            height?: number;
+            frameRate: { num: number; den: number };
+          };
+        } | null;
+        audio(): {
+          index: number;
+          codecpar: {
+            codecId: number;
+            sampleRate?: number;
+          };
+        } | null;
+        packets(): AsyncIterator<PacketLike>;
+        close(): void;
+      }>;
+    };
+    BitStreamFilterAPI: {
+      create(
+        name: string,
+        stream: unknown,
+        options?: { options?: Record<string, string> }
+      ): {
+        outputCodecParameters?: {
+          width?: number;
+          height?: number;
+          frameRate: { num: number; den: number };
+        };
+        filterAll(packet: PacketLike | null): Promise<(PacketLike | null)[]>;
+        close(): void;
+      };
+    };
+    avGetCodecName(codecId: number): string;
+  };
+
+  const demuxer = await imported.Demuxer.open(input, {
+    format: 'nut',
+    bufferSize: 8192,
+    options: {
+      fflags: 'nobuffer',
+    },
+  });
+
+  const videoSource = demuxer.video();
+  if (!videoSource) {
+    demuxer.close();
+    throw new AppError('The transcoded stream did not contain video.', ExitCode.Media);
+  }
+
+  const videoCodecName = imported.avGetCodecName(videoSource.codecpar.codecId).toLowerCase();
+  if (videoCodecName !== 'h264') {
+    demuxer.close();
+    throw new AppError('Only H264 video is supported in v1.', ExitCode.Media, {
+      codec: videoCodecName,
+    });
+  }
+
+  const audioSource = demuxer.audio();
+  const audioCodecName = audioSource
+    ? imported.avGetCodecName(audioSource.codecpar.codecId).toLowerCase()
+    : undefined;
+  if (audioSource && audioCodecName !== 'opus') {
+    demuxer.close();
+    throw new AppError('Only Opus audio is supported in v1.', ExitCode.Media, {
+      codec: audioCodecName,
+    });
+  }
+
+  const videoFilters = [
+    imported.BitStreamFilterAPI.create('h264_mp4toannexb', videoSource),
+    imported.BitStreamFilterAPI.create('h264_metadata', videoSource, {
+      options: {
+        aud: 'remove',
+      },
+    }),
+    imported.BitStreamFilterAPI.create('dump_extra', videoSource),
+  ];
+
+  const filteredCodecParameters =
+    videoFilters.at(-1)?.outputCodecParameters ?? videoSource.codecpar;
+  const videoPipe = new PassThrough({ objectMode: true, highWaterMark: 64 });
+  const audioPipe = new PassThrough({ objectMode: true, highWaterMark: 64 });
+
+  const packetIterator = demuxer.packets();
+
+  const cleanup = (): void => {
+    for (const filter of videoFilters) {
+      filter.close();
+    }
+
+    demuxer.close();
+    videoPipe.end();
+    audioPipe.end();
+  };
+
+  void (async () => {
+    try {
+      while (true) {
+        const next = await packetIterator.next();
+        if (next.done) {
+          const flushedPackets = await applyBitstreamFilters(videoFilters, null);
+          for (const packet of flushedPackets) {
+            if (packet) {
+              videoPipe.write(packet);
+            }
+          }
+
+          cleanup();
+          return;
+        }
+
+        const packet = next.value;
+        if (packet.streamIndex === videoSource.index) {
+          const filteredPackets = await applyBitstreamFilters(videoFilters, packet.clone());
+          for (const filteredPacket of filteredPackets) {
+            if (filteredPacket) {
+              videoPipe.write(filteredPacket);
+            }
+          }
+        } else if (audioSource && packet.streamIndex === audioSource.index) {
+          const clonedPacket = packet.clone();
+          if (!clonedPacket.duration && clonedPacket.data) {
+            clonedPacket.duration = BigInt(parseOpusPacketDuration(clonedPacket.data));
+          }
+          audioPipe.write(clonedPacket);
+        }
+
+        packet.free();
+      }
+    } catch (error) {
+      logger.error('NUT demux failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      cleanup();
+    }
+  })();
+
+  const video: VideoStreamInfo = {
+    index: videoSource.index,
+    codec: 'H264',
+    width: filteredCodecParameters.width || 0,
+    height: filteredCodecParameters.height || 0,
+    framerateNum: filteredCodecParameters.frameRate.num,
+    framerateDen: filteredCodecParameters.frameRate.den,
+    stream: videoPipe,
+  };
+
+  const audio = audioSource
+    ? {
+        index: audioSource.index,
+        codec: 'OPUS' as const,
+        sampleRate: audioSource.codecpar.sampleRate || 48_000,
+        stream: audioPipe,
+      }
+    : undefined;
+
+  return audio ? { video, audio } : { video };
+}
+
+async function applyBitstreamFilters(
+  filters: { filterAll(packet: PacketLike | null): Promise<(PacketLike | null)[]> }[],
+  input: PacketLike | null
+): Promise<(PacketLike | null)[]> {
+  let packets: (PacketLike | null)[] = [input];
+
+  for (const filter of filters) {
+    const nextPackets: (PacketLike | null)[] = [];
+
+    for (const packet of packets) {
+      const filtered = await filter.filterAll(packet);
+      nextPackets.push(...filtered);
+      packet?.free();
+    }
+
+    if (input === null) {
+      nextPackets.push(null);
+    }
+
+    packets = nextPackets;
+  }
+
+  return packets;
+}

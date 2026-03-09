@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+.env
+vendor/libdave/
+vendor/libdave-src/
+tmp/
+.DS_Store
+.claude/
+npm-debug.log*
