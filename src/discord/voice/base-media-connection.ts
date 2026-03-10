@@ -128,6 +128,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
 
     this.webRtcWrapper.close();
     this.webSocket?.close();
+    this.daveEncryptor.destroy();
   }
 
   public setSession(sessionId: string): void {

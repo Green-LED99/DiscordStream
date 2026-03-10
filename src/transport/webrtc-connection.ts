@@ -11,6 +11,14 @@ import { codecPayloadType } from './codec-payload-type.js';
 type SupportedVideoCodec = 'H264';
 type NodeDataChannelModule = typeof import('@lng2004/node-datachannel');
 
+function asSendBuffer(frame: Uint8Array | Buffer): Buffer {
+  if (Buffer.isBuffer(frame)) {
+    return frame;
+  }
+
+  return Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength);
+}
+
 export class WebRtcConnectionWrapper {
   private rtc?: NodeDataChannelModule;
   private peerConnection?: PeerConnection;
@@ -76,7 +84,7 @@ export class WebRtcConnectionWrapper {
       ? this.mediaConnectionRef.daveEncryptor.encryptAudio(frame, this.mediaConnectionRef.audioSsrc)
       : frame;
 
-    this.audioTrack?.sendMessageBinary(Buffer.from(payload));
+    this.audioTrack?.sendMessageBinary(asSendBuffer(payload));
     rtpConfig.timestamp += Math.round((frameTimeMs * rtpConfig.clockRate) / 1000);
   }
 
@@ -91,7 +99,7 @@ export class WebRtcConnectionWrapper {
       ? this.mediaConnectionRef.daveEncryptor.encryptVideo(frame, this.mediaConnectionRef.videoSsrc)
       : frame;
 
-    this.videoTrack?.sendMessageBinary(Buffer.from(payload));
+    this.videoTrack?.sendMessageBinary(asSendBuffer(payload));
     rtpConfig.timestamp += Math.round((frameTimeMs * rtpConfig.clockRate) / 1000);
   }
 

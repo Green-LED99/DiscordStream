@@ -8,6 +8,7 @@ export type FfprobeStream = {
   height?: number;
   avg_frame_rate?: string;
   sample_rate?: string;
+  channels?: number;
 };
 
 export type FfprobeResult = {
@@ -25,7 +26,17 @@ export async function probeMedia(ffprobePath: string, url: string): Promise<Ffpr
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
       ffprobePath,
-      ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', url],
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'stream=codec_name,codec_type,width,height,avg_frame_rate,sample_rate,channels:format=format_name,duration',
+        '-show_streams',
+        '-show_format',
+        '-of',
+        'json',
+        url,
+      ],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       }

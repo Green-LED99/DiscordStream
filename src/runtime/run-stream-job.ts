@@ -9,7 +9,9 @@ import { Logger } from '../logging.js';
 import { validateDirectMediaUrl } from '../media/direct-url.js';
 import { createFfmpegNutProcess } from '../media/ffmpeg.js';
 import { probeMedia } from '../media/ffprobe.js';
+import { PipelineStats } from '../media/pipeline-stats.js';
 import { playStream } from '../media/play-stream.js';
+import { describeTranscodePlan, selectTranscodePlan } from '../media/transcode-plan.js';
 
 export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
   const config = loadConfig();
@@ -21,6 +23,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
   let streamer: Streamer | null = null;
   let gatewayClient: Awaited<ReturnType<typeof createCompanionGatewayClient>> | null = null;
   let ffmpegProcess: ReturnType<typeof createFfmpegNutProcess> | null = null;
+  let pipelineStats: PipelineStats | null = null;
 
   try {
     lifecycle.emit('authenticating', {
@@ -35,7 +38,12 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       loadDaveModule(),
     ]);
 
+    const ffprobeStartedAt = performance.now();
     const mediaInfo = await probeMedia(config.ffprobePath, mediaUrl.toString());
+    const transcodePlan = selectTranscodePlan(mediaInfo);
+    pipelineStats = new PipelineStats(logger.child('pipeline'), transcodePlan);
+    pipelineStats.setFfprobeDuration(performance.now() - ffprobeStartedAt);
+    logger.debug('Selected media optimization plan', describeTranscodePlan(transcodePlan));
     lifecycle.emit('resolved_media', {
       url: mediaUrl.toString(),
       streamCount: mediaInfo.streams.length,
@@ -67,7 +75,8 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
     });
     await streamer.joinVoice(spec.guildId, spec.channelId);
 
-    ffmpegProcess = createFfmpegNutProcess(config.ffmpegPath, mediaUrl.toString());
+    ffmpegProcess = createFfmpegNutProcess(config.ffmpegPath, mediaUrl.toString(), transcodePlan);
+    pipelineStats.markFfmpegStarted(ffmpegProcess.startedAt);
     lifecycle.emit('starting_stream', {
       url: mediaUrl.toString(),
       mode: spec.mode,
@@ -77,6 +86,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       ffmpegProcess.output,
       streamer,
       logger.child('media'),
+      pipelineStats,
       abortController.signal
     );
 
@@ -105,6 +115,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       process.off(signalName, handler);
     }
 
+    pipelineStats?.stop();
     ffmpegProcess?.stop();
     streamer?.leaveVoice();
     streamer?.destroy();

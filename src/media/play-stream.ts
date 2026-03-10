@@ -2,15 +2,19 @@ import type { Streamer } from '../discord/streamer.js';
 import type { Logger } from '../logging.js';
 import { AudioStream } from './audio-stream.js';
 import { demuxNutStream } from './demuxer.js';
+import type { PipelineStats } from './pipeline-stats.js';
 import { VideoStream } from './video-stream.js';
 
 export async function playStream(
   input: NodeJS.ReadableStream,
   streamer: Streamer,
   logger: Logger,
+  stats?: PipelineStats,
   abortSignal?: AbortSignal
 ): Promise<void> {
   const { video, audio } = await demuxNutStream(input, logger.child('demux'));
+  stats?.markFfmpegReady();
+  stats?.startPeriodicReporting();
   const connection = await streamer.createStream();
   await connection.setPacketizer('H264');
   connection.mediaConnection.setSpeaking(true);
@@ -20,8 +24,8 @@ export async function playStream(
     fps: Math.round(video.framerateNum / video.framerateDen),
   });
 
-  const videoStream = new VideoStream(connection, logger.child('video'));
-  const audioStream = audio ? new AudioStream(connection, logger.child('audio')) : undefined;
+  const videoStream = new VideoStream(connection, stats);
+  const audioStream = audio ? new AudioStream(connection, stats) : undefined;
 
   if (audio && audioStream) {
     videoStream.syncStream = audioStream;

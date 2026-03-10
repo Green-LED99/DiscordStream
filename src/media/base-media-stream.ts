@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
-import type { Logger } from '../logging.js';
+import type { PipelineStats } from './pipeline-stats.js';
 
 type PacketLike = {
   data?: Uint8Array | Buffer;
@@ -23,8 +23,8 @@ export class BaseMediaStream extends Writable {
   private syncTarget: BaseMediaStream | undefined;
 
   public constructor(
-    private readonly type: string,
-    private readonly logger: Logger,
+    private readonly type: 'video' | 'audio',
+    private readonly stats?: PipelineStats,
     noSleep = false
   ) {
     super({ objectMode: true, highWaterMark: 0 });
@@ -66,27 +66,22 @@ export class BaseMediaStream extends Writable {
       const frameTimeMs =
         (Number(packet.duration || 0n) / packet.timeBase.den) * packet.timeBase.num * 1000;
       const startSend = performance.now();
-      await this.sendFrame(Uint8Array.from(packet.data), frameTimeMs);
+      await this.sendFrame(packet.data, frameTimeMs);
       const endSend = performance.now();
 
       this.ptsValue = (Number(packet.pts || 0n) / packet.timeBase.den) * packet.timeBase.num * 1000;
       this.emit('pts', this.ptsValue);
 
       const sendDurationMs = endSend - startSend;
-      this.logger.debug('Frame sent', {
-        type: this.type,
-        pts: this.ptsValue,
-        frameTimeMs,
-        sendDurationMs,
-      });
+      this.stats?.recordFrame(this.type, sendDurationMs);
 
       this.startTime ??= startSend;
       this.startPts ??= this.ptsValue;
 
-      const sleepDuration = Math.max(
-        0,
-        this.ptsValue - this.startPts + frameTimeMs - (endSend - this.startTime)
-      );
+      const targetElapsedMs = this.ptsValue - this.startPts + frameTimeMs;
+      const actualElapsedMs = endSend - this.startTime;
+      const sleepDuration = Math.max(0, targetElapsedMs - actualElapsedMs);
+      this.stats?.recordLateFrame(actualElapsedMs - targetElapsedMs);
 
       if (this.noSleepMode || sleepDuration === 0) {
         callback();

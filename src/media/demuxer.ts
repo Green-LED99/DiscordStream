@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { PassThrough, type Readable } from 'node:stream';
 import { AppError, ExitCode } from '../errors.js';
 import type { Logger } from '../logging.js';
@@ -170,7 +171,9 @@ export async function demuxNutStream(
           const flushedPackets = await applyBitstreamFilters(videoFilters, null);
           for (const packet of flushedPackets) {
             if (packet) {
-              videoPipe.write(packet);
+              if (!videoPipe.write(packet)) {
+                await once(videoPipe, 'drain');
+              }
             }
           }
 
@@ -180,18 +183,25 @@ export async function demuxNutStream(
 
         const packet = next.value;
         if (packet.streamIndex === videoSource.index) {
-          const filteredPackets = await applyBitstreamFilters(videoFilters, packet.clone());
+          const filteredPackets = await applyBitstreamFilters(videoFilters, packet);
           for (const filteredPacket of filteredPackets) {
             if (filteredPacket) {
-              videoPipe.write(filteredPacket);
+              if (!videoPipe.write(filteredPacket)) {
+                await once(videoPipe, 'drain');
+              }
             }
           }
-        } else if (audioSource && packet.streamIndex === audioSource.index) {
-          const clonedPacket = packet.clone();
-          if (!clonedPacket.duration && clonedPacket.data) {
-            clonedPacket.duration = BigInt(parseOpusPacketDuration(clonedPacket.data));
+          continue;
+        }
+
+        if (audioSource && packet.streamIndex === audioSource.index) {
+          if (!packet.duration && packet.data) {
+            packet.duration = BigInt(parseOpusPacketDuration(packet.data));
           }
-          audioPipe.write(clonedPacket);
+          if (!audioPipe.write(packet)) {
+            await once(audioPipe, 'drain');
+          }
+          continue;
         }
 
         packet.free();
