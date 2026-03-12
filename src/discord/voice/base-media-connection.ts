@@ -503,6 +503,9 @@ export abstract class BaseMediaConnection extends EventEmitter {
       case VoiceOpcode.Hello:
         this.setupHeartbeat(payload.d.heartbeat_interval);
         break;
+      case VoiceOpcode.Heartbeat:
+        this.sendHeartbeat(false);
+        break;
       case VoiceOpcode.Ready:
         await this.handleReady(payload.d);
         break;
@@ -651,21 +654,22 @@ export abstract class BaseMediaConnection extends EventEmitter {
     this.sendHeartbeat();
   }
 
-  private sendHeartbeat(): void {
+  private sendHeartbeat(recordMissedAck = true): void {
     if (this.webSocket?.readyState !== WebSocket.OPEN) {
       return;
     }
 
     if (
+      recordMissedAck &&
       this.lastHeartbeatSentAt !== undefined &&
       (this.lastHeartbeatAckAt ?? 0) < this.lastHeartbeatSentAt
     ) {
       this.missedHeartbeatAcks += 1;
-    } else {
+    } else if (recordMissedAck) {
       this.missedHeartbeatAcks = 0;
     }
 
-    if (this.missedHeartbeatAcks >= 2) {
+    if (recordMissedAck && this.missedHeartbeatAcks >= 2) {
       this.logger.warn(
         'Voice heartbeat timed out',
         this.logContext({ trigger: 'heartbeat_timeout' })

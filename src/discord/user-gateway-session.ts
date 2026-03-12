@@ -8,7 +8,7 @@ import { GatewayOpcode } from './gateway-opcodes.js';
 const GATEWAY_VERSION = 9;
 const READY_TIMEOUT_MS = 20_000;
 const GUILD_CACHE_WAIT_MS = 2_000;
-const GATEWAY_CAPABILITIES = 14_333;
+const GATEWAY_CAPABILITIES = 16_381;
 const CONNECT_PERMISSION = 1_048_576n;
 const STREAM_PERMISSION = 512n;
 const ADMINISTRATOR_PERMISSION = 8n;
@@ -17,6 +17,7 @@ const STAGE_CHANNEL_TYPE = 13;
 const SUPPORTED_VOICE_CHANNEL_TYPES = new Set([2, 16]);
 
 type RawGatewayListener = (event: GatewayEvent) => void;
+type GatewayCloseClassification = 'resume' | 'identify' | 'fatal' | 'auth';
 
 type GatewayPayload = {
   op: number;
@@ -383,6 +384,9 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       case GatewayOpcode.Dispatch:
         this.handleDispatch(payload.t, payload.d);
         return;
+      case GatewayOpcode.Heartbeat:
+        this.sendHeartbeat();
+        return;
       case GatewayOpcode.Hello:
         this.handleHello(payload.d);
         return;
@@ -492,7 +496,11 @@ class UserGatewaySessionImpl implements UserGatewaySession {
 
     const now = performance.now();
     if (this.heartbeatAckDeadlineAt !== null && now > this.heartbeatAckDeadlineAt) {
-      void this.reconnect(true, 'gateway_heartbeat_timeout');
+      this.logger.warn('Gateway heartbeat timed out; forcing a resumable reconnect', {
+        sessionId: this.gatewaySessionId,
+        seq: this.seq,
+      });
+      this.webSocket.close(3_990, 'gateway_heartbeat_timeout');
       return;
     }
 
@@ -567,7 +575,16 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       return;
     }
 
-    if (event.code === 4_004) {
+    const classification = classifyGatewayCloseCode(event.code);
+    this.logger.warn('Gateway websocket closed', {
+      closeCode: event.code,
+      closeReason: event.reason,
+      classification,
+      sessionId: this.gatewaySessionId,
+      seq: this.seq,
+    });
+
+    if (classification === 'auth') {
       this.emitFatal(
         new AppError('Discord rejected the companion token.', ExitCode.Auth, {
           closeCode: event.code,
@@ -577,7 +594,7 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       return;
     }
 
-    if (event.code >= 4_010 && event.code <= 4_014) {
+    if (classification === 'fatal') {
       this.emitFatal(
         new AppError('Discord closed the user gateway with a fatal error.', ExitCode.Gateway, {
           closeCode: event.code,
@@ -587,7 +604,7 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       return;
     }
 
-    await this.reconnect(Boolean(this.gatewaySessionId), 'socket_close', event.code, event.reason);
+    await this.reconnect(classification === 'resume', 'socket_close', event.code, event.reason);
   }
 
   private async reconnect(
@@ -934,6 +951,24 @@ function isSupportedGatewayEvent(eventType: string, data: unknown): boolean {
       return typeof data === 'object' && data !== null;
     default:
       return false;
+  }
+}
+
+function classifyGatewayCloseCode(code: number): GatewayCloseClassification {
+  if (code < 4_000) {
+    return 'resume';
+  }
+
+  switch (code) {
+    case 4_000:
+      return 'resume';
+    case 4_004:
+      return 'auth';
+    case 4_007:
+    case 4_009:
+      return 'identify';
+    default:
+      return 'fatal';
   }
 }
 

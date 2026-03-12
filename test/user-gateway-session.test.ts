@@ -104,7 +104,7 @@ describe('UserGatewaySession', () => {
       d: { capabilities: number; properties: { browser: string } };
     };
     expect(identifyPayload.op).toBe(2);
-    expect(identifyPayload.d.capabilities).toBeGreaterThan(0);
+    expect(identifyPayload.d.capabilities).toBe(16_381);
     expect(identifyPayload.d.properties.browser).toBe('Discord Client');
 
     socket?.dispatch({
@@ -131,6 +131,58 @@ describe('UserGatewaySession', () => {
       seq: 1,
       resumeGatewayUrl: 'wss://resume.discord.test',
     });
+    session.destroy();
+  });
+
+  test('responds immediately when the gateway requests an extra heartbeat', async () => {
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+
+    await vi.waitFor(() => {
+      const heartbeatCount = socket?.sent.filter((message) =>
+        String(message).includes('"op":1')
+      ).length;
+      expect(heartbeatCount).toBeGreaterThan(0);
+    });
+
+    const initialHeartbeatCount = socket?.sent.filter((message) =>
+      String(message).includes('"op":1')
+    ).length;
+    socket?.dispatch({
+      op: 1,
+      d: null,
+    });
+
+    await vi.waitFor(() => {
+      const heartbeatCount = socket?.sent.filter((message) =>
+        String(message).includes('"op":1')
+      ).length;
+      expect(heartbeatCount).toBe((initialHeartbeatCount ?? 0) + 1);
+    });
+
+    socket?.dispatch({
+      op: 0,
+      t: 'READY',
+      s: 1,
+      d: {
+        user: { id: 'user-1' },
+        session_id: 'gateway-session',
+        resume_gateway_url: 'wss://resume.discord.test',
+      },
+    });
+    await loginPromise;
     session.destroy();
   });
 
@@ -186,6 +238,77 @@ describe('UserGatewaySession', () => {
     expect(resumePayload.op).toBe(6);
     expect(resumePayload.d.session_id).toBe('gateway-session');
     expect(resumePayload.d.seq).toBe(5);
+    session.destroy();
+  });
+
+  test('re-identifies instead of resuming after an invalid sequence close', async () => {
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const firstSocket = FakeWebSocket.instances[0];
+
+    firstSocket?.open();
+    firstSocket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+    firstSocket?.dispatch({
+      op: 0,
+      t: 'READY',
+      s: 5,
+      d: {
+        user: { id: 'user-1' },
+        session_id: 'gateway-session',
+        resume_gateway_url: 'wss://resume.discord.test',
+      },
+    });
+    await loginPromise;
+
+    firstSocket?.close(4007, 'invalid_seq');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[1]).toBeDefined();
+    });
+
+    const nextSocket = FakeWebSocket.instances[1];
+    nextSocket?.open();
+    nextSocket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(nextSocket?.sent.length).toBeGreaterThan(0);
+    });
+
+    expect(nextSocket?.sent.some((message) => String(message).includes('"op":6'))).toBe(false);
+    expect(nextSocket?.sent.some((message) => String(message).includes('"op":2'))).toBe(true);
+    session.destroy();
+  });
+
+  test('treats too many gateway sessions as fatal', async () => {
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+    socket?.close(4015, 'too_many_sessions');
+
+    await expect(loginPromise).rejects.toBeInstanceOf(AppError);
     session.destroy();
   });
 

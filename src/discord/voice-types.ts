@@ -76,6 +76,7 @@ export type VoicePrepareEpoch = {
 
 export type VoiceGatewayResponse =
   | { op: 2; d: VoiceReady; seq?: number }
+  | { op: 3; d: unknown; seq?: number }
   | { op: 4; d: VoiceSelectProtocolAck; seq?: number }
   | { op: 6; d: { t: number }; seq?: number }
   | { op: 8; d: VoiceHello; seq?: number }

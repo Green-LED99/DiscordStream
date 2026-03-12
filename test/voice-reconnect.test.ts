@@ -241,6 +241,39 @@ describe('BaseMediaConnection reconnect handling', () => {
     );
   });
 
+  test('responds immediately when the voice gateway requests a heartbeat', () => {
+    const { connection } = createConnection();
+    connection.setSession('session-1');
+    connection.setTokens('voice.discord.test', 'token-1');
+
+    const socket = FakeWebSocket.instances[0];
+    socket?.open();
+    socket?.dispatchMessage(
+      JSON.stringify({
+        op: 8,
+        d: {
+          heartbeat_interval: 45_000,
+        },
+      })
+    );
+
+    const initialHeartbeatCount = socket?.sent.filter((message) =>
+      String(message).includes('"op":3')
+    ).length;
+
+    socket?.dispatchMessage(
+      JSON.stringify({
+        op: 3,
+        d: null,
+      })
+    );
+
+    const heartbeatCount = socket?.sent.filter((message) =>
+      String(message).includes('"op":3')
+    ).length;
+    expect(heartbeatCount).toBe((initialHeartbeatCount ?? 0) + 1);
+  });
+
   test('surfaces fatal close codes', () => {
     const { connection, streamer } = createConnection();
     connection.setSession('session-1');

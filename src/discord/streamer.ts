@@ -170,13 +170,14 @@ export class Streamer {
   }
 
   public leaveVoice(): void {
+    const guildId = this.voiceConnection?.guildId ?? this.desiredVoice?.guildId ?? null;
     this.stopStream();
     this.voiceConnection?.stop();
     this.voiceJoinCoordinator = undefined;
     this.voiceConnection = undefined;
     this.desiredVoice = undefined;
     this.session.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
-      guild_id: null,
+      guild_id: guildId,
       channel_id: null,
       self_mute: true,
       self_deaf: false,

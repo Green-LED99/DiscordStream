@@ -289,4 +289,45 @@ describe('Streamer', () => {
 
     await joinPromise;
   });
+
+  test('leaves voice with the active guild id', async () => {
+    const session = createSession();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        user_id: 'user-1',
+        session_id: 'voice-session',
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    session.sendGatewayOpcode.mockClear();
+    streamer.leaveVoice();
+
+    expect(session.sendGatewayOpcode).toHaveBeenCalledWith(4, {
+      guild_id: 'guild-1',
+      channel_id: null,
+      self_mute: true,
+      self_deaf: false,
+      self_video: false,
+    });
+  });
 });
