@@ -17,6 +17,7 @@ class MockConnection extends EventEmitter {
   public readonly setVideoAttributes = vi.fn();
   public readonly webRtcConn = { mediaConnection: this } as const;
   public voiceSessionId: string | null = 'session-1';
+  public isReady = false;
 
   public constructor(
     public readonly connectionKind: 'voice' | 'stream',
@@ -85,9 +86,18 @@ describe('Streamer', () => {
     const result = await streamer.joinVoice('guild-1', 'channel-1');
 
     expect(result).toBe(wrapper);
-    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(1, 1);
-    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(2, 2);
-    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(3, 3);
+    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(1, 1, {
+      preserveSession: true,
+      preserveTokens: true,
+    });
+    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(2, 2, {
+      preserveSession: true,
+      preserveTokens: true,
+    });
+    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenNthCalledWith(3, 3, {
+      preserveSession: true,
+      preserveTokens: true,
+    });
     expect(client.sendGatewayOpcode).toHaveBeenCalledTimes(3);
     expect(client.sendGatewayOpcode).toHaveBeenNthCalledWith(1, 4, expect.any(Object));
   });
@@ -121,5 +131,43 @@ describe('Streamer', () => {
     expect(client.sendGatewayOpcode).toHaveBeenCalledWith(4, expect.any(Object));
     expect(client.sendGatewayOpcode).toHaveBeenCalledWith(18, expect.any(Object));
     expect(client.sendGatewayOpcode).toHaveBeenCalledWith(22, expect.any(Object));
+  });
+
+  test('ignores non-target voice state updates before the initial join is ready', async () => {
+    const client = createClient();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(client as never, {} as never, new Logger('test', 'debug'));
+
+    voiceWaitUntilReadyMock.mockImplementation(() => new Promise(() => {}));
+
+    void streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+
+    const rawListener = client.onRaw.mock.calls[0]?.[0] as
+      | ((event: {
+          t: 'VOICE_STATE_UPDATE';
+          d: {
+            user_id: string;
+            session_id: string;
+            guild_id: string;
+            channel_id: null;
+          };
+        }) => void)
+      | undefined;
+
+    rawListener?.({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        user_id: 'user-1',
+        session_id: 'session-null',
+        guild_id: 'guild-1',
+        channel_id: null,
+      },
+    });
+    await Promise.resolve();
+
+    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenCalledTimes(1);
+    expect(nextVoiceConnection.setSession).not.toHaveBeenCalledWith('session-null');
   });
 });

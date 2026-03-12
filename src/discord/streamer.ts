@@ -85,7 +85,10 @@ export class Streamer {
       INITIAL_CONNECT_ATTEMPTS,
       'voice join',
       async (attempt) => {
-        voiceConnection.prepareForReconnect(attempt);
+        voiceConnection.prepareForReconnect(attempt, {
+          preserveSession: true,
+          preserveTokens: true,
+        });
         this.requestVoiceJoin();
       }
     );
@@ -119,7 +122,10 @@ export class Streamer {
       INITIAL_CONNECT_ATTEMPTS,
       'stream create',
       async (attempt) => {
-        streamConnection.prepareForReconnect(attempt);
+        streamConnection.prepareForReconnect(attempt, {
+          preserveSession: true,
+          preserveTokens: true,
+        });
         this.requestStreamCreate();
       }
     );
@@ -297,6 +303,10 @@ export class Streamer {
       if (this.streamConnection && this.desiredStream) {
         this.streamConnection.setSession(payload.d.session_id);
       }
+      return;
+    }
+
+    if (!this.voiceConnection.isReady) {
       return;
     }
 

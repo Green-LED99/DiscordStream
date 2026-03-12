@@ -48,6 +48,11 @@ type ConnectionState = {
   resuming: boolean;
 };
 
+type ReconnectPreparationOptions = {
+  preserveSession?: boolean;
+  preserveTokens?: boolean;
+};
+
 export abstract class BaseMediaConnection extends EventEmitter {
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private heartbeatIntervalMs: number | undefined;
@@ -212,20 +217,24 @@ export abstract class BaseMediaConnection extends EventEmitter {
     this.reconnectState = state;
   }
 
-  public prepareForReconnect(attempt: number): void {
+  public prepareForReconnect(attempt: number, options?: ReconnectPreparationOptions): void {
+    const preservedSessionId = options?.preserveSession ? this.sessionId : null;
+    const preservedVoiceServer = options?.preserveTokens ? this.voiceServer : null;
+    const preservedVoiceToken = options?.preserveTokens ? this.voiceToken : null;
+
     this.setReconnectAttempt(attempt, 'refreshing');
     this.ready = false;
     this.connectionState = {
-      hasSession: false,
-      hasToken: false,
+      hasSession: preservedSessionId !== null,
+      hasToken: preservedVoiceServer !== null && preservedVoiceToken !== null,
       started: false,
       resuming: false,
     };
     this.sequenceNumber = -1;
     this.currentWebRtcParameters = null;
-    this.voiceServer = null;
-    this.voiceToken = null;
-    this.sessionId = null;
+    this.voiceServer = preservedVoiceServer;
+    this.voiceToken = preservedVoiceToken;
+    this.sessionId = preservedSessionId;
     this.lastCloseCode = undefined;
     this.lastCloseReason = undefined;
     this.heartbeatIntervalMs = undefined;
@@ -239,6 +248,10 @@ export abstract class BaseMediaConnection extends EventEmitter {
     const socket = this.webSocket;
     this.webSocket = null;
     socket?.close();
+
+    if (this.connectionState.hasSession && this.connectionState.hasToken) {
+      this.start();
+    }
   }
 
   public setSpeaking(speaking: boolean): void {
