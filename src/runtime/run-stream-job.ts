@@ -1,8 +1,8 @@
 import { loadConfig } from '../config.js';
 import type { StreamJobSpec } from '../contracts.js';
 import { loadDaveModule } from '../dave/libdave.js';
-import { createCompanionGatewayClient } from '../discord/gateway-client.js';
 import { Streamer } from '../discord/streamer.js';
+import { createUserGatewaySession } from '../discord/user-gateway-session.js';
 import { AppError, ExitCode } from '../errors.js';
 import { LifecycleReporter } from '../lifecycle.js';
 import { Logger } from '../logging.js';
@@ -21,7 +21,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
   const signalHandlers = createSignalHandlers(abortController);
 
   let streamer: Streamer | null = null;
-  let gatewayClient: Awaited<ReturnType<typeof createCompanionGatewayClient>> | null = null;
+  let gatewaySession: ReturnType<typeof createUserGatewaySession> | null = null;
   let ffmpegProcess: ReturnType<typeof createFfmpegNutProcess> | null = null;
   let pipelineStats: PipelineStats | null = null;
 
@@ -49,10 +49,10 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       streamCount: mediaInfo.streams.length,
     });
 
-    gatewayClient = await createCompanionGatewayClient();
-    await gatewayClient.login(config.companionToken);
+    gatewaySession = createUserGatewaySession(logger.child('gateway'));
+    await gatewaySession.login(config.companionToken);
 
-    const currentUser = gatewayClient.currentUser();
+    const currentUser = gatewaySession.currentUser();
     if (!currentUser) {
       throw new AppError(
         'The companion client did not expose the authenticated user.',
@@ -67,7 +67,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       );
     }
 
-    streamer = new Streamer(gatewayClient, dave, logger.child('gateway'));
+    streamer = new Streamer(gatewaySession, dave, logger.child('streamer'));
     lifecycle.emit('joining_voice', {
       guildId: spec.guildId,
       channelId: spec.channelId,
@@ -119,7 +119,7 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
     ffmpegProcess?.stop();
     streamer?.leaveVoice();
     streamer?.destroy();
-    gatewayClient?.destroy();
+    gatewaySession?.destroy();
   }
 }
 

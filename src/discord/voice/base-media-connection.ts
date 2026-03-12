@@ -339,7 +339,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
     }
 
     this.connectionState.started = true;
-    this.webSocket = new WebSocket(`wss://${this.voiceServer}/?v=8`);
+    this.webSocket = new WebSocket(`wss://${this.voiceServer}/?v=9`);
     this.webSocket.binaryType = 'arraybuffer';
 
     this.webSocket.addEventListener('open', () => {
@@ -455,11 +455,13 @@ export abstract class BaseMediaConnection extends EventEmitter {
       throw new AppError('Voice identify is missing required connection state.', ExitCode.Gateway);
     }
 
+    this.logger.info('Voice websocket identify sent', this.logContext());
     this.sendOpcode(VoiceOpcode.Identify, {
       server_id: this.serverId,
       user_id: this.userId,
       session_id: this.sessionId,
       token: this.voiceToken,
+      channel_id: this.channelId,
       video: true,
       streams: streamsSimulcast,
       max_dave_protocol_version: this.dave.MaxSupportedProtocolVersion(),
@@ -471,10 +473,12 @@ export abstract class BaseMediaConnection extends EventEmitter {
       throw new AppError('Voice resume is missing required connection state.', ExitCode.Gateway);
     }
 
+    this.logger.info('Voice websocket resume sent', this.logContext());
     this.sendOpcode(VoiceOpcode.Resume, {
       server_id: this.serverId,
       session_id: this.sessionId,
       token: this.voiceToken,
+      channel_id: this.channelId,
       seq_ack: this.sequenceNumber,
     });
   }
@@ -711,6 +715,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
         'Discord closed the voice websocket with a fatal close code.',
         ExitCode.Gateway,
         {
+          reason: 'voice_ws_fatal_close',
           ...this.logContext(),
         }
       )

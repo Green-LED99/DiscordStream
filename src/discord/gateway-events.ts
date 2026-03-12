@@ -40,8 +40,17 @@ export type GatewayStreamServerUpdate = GatewayEventGeneric<
   }
 >;
 
+export type GatewayStreamDelete = GatewayEventGeneric<
+  'STREAM_DELETE',
+  {
+    stream_key: string;
+    reason?: string;
+  }
+>;
+
 export type GatewayEvent =
   | GatewayVoiceStateUpdate
   | GatewayVoiceServerUpdate
   | GatewayStreamCreate
-  | GatewayStreamServerUpdate;
+  | GatewayStreamServerUpdate
+  | GatewayStreamDelete;

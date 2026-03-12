@@ -2,22 +2,24 @@ import type { DaveModule } from '../dave/types.js';
 import { AppError, ExitCode, toAppError } from '../errors.js';
 import type { Logger } from '../logging.js';
 import type { WebRtcConnectionWrapper } from '../transport/webrtc-connection.js';
-import type { CompanionGatewayClient } from './gateway-client.js';
 import type {
   GatewayEvent,
   GatewayStreamCreate,
+  GatewayStreamDelete,
   GatewayStreamServerUpdate,
   GatewayVoiceServerUpdate,
   GatewayVoiceStateUpdate,
 } from './gateway-events.js';
 import { GatewayOpcode } from './gateway-opcodes.js';
+import { StreamJoinCoordinator } from './join/stream-join-coordinator.js';
+import { VoiceJoinCoordinator } from './join/voice-join-coordinator.js';
+import type { UserGatewaySession } from './user-gateway-session.js';
 import { generateStreamKey, parseStreamKey } from './utils.js';
 import type { BaseMediaConnection } from './voice/base-media-connection.js';
 import type { ReconnectDiagnostics } from './voice/reconnect.js';
 import { StreamConnection } from './voice/stream-connection.js';
 import { VoiceConnection } from './voice/voice-connection.js';
 
-const INITIAL_CONNECT_ATTEMPTS = 3;
 const RUNTIME_RECOVERY_ATTEMPTS = 3;
 
 type DesiredVoiceState = {
@@ -30,6 +32,8 @@ type FatalListener = (error: AppError) => void;
 export class Streamer {
   private voiceConnection: VoiceConnection | undefined;
   private streamConnection: StreamConnection | undefined;
+  private voiceJoinCoordinator: VoiceJoinCoordinator | undefined;
+  private streamJoinCoordinator: StreamJoinCoordinator | undefined;
   private desiredVoice: DesiredVoiceState | undefined;
   private desiredStream: DesiredVoiceState | undefined;
   private readonly rawListener: (event: GatewayEvent) => void;
@@ -38,7 +42,7 @@ export class Streamer {
   private recoveryPromise: Promise<void> | null = null;
 
   public constructor(
-    private readonly client: CompanionGatewayClient,
+    private readonly session: UserGatewaySession,
     private readonly dave: DaveModule,
     private readonly logger: Logger
   ) {
@@ -46,11 +50,11 @@ export class Streamer {
       this.handleRawEvent(event);
     };
 
-    this.client.onRaw(this.rawListener);
+    this.session.onRaw(this.rawListener);
   }
 
   public destroy(): void {
-    this.client.offRaw(this.rawListener);
+    this.session.offRaw(this.rawListener);
   }
 
   public onFatal(listener: FatalListener): void {
@@ -62,13 +66,28 @@ export class Streamer {
   }
 
   public async joinVoice(guildId: string, channelId: string): Promise<WebRtcConnectionWrapper> {
-    const currentUser = this.client.currentUser();
+    const currentUser = this.session.currentUser();
     if (!currentUser) {
-      throw new Error('The companion client is not logged in.');
+      throw new AppError('The companion gateway session is not ready.', ExitCode.Auth);
     }
 
     this.desiredVoice = { guildId, channelId };
     this.runtimeRecoveryCount = 0;
+
+    const preflight = await this.session.preflightVoiceJoin(guildId, channelId);
+    if (preflight.warnings.length > 0) {
+      this.logger.warn('Voice join preflight reported potential blockers', {
+        guildId,
+        channelId,
+        ...preflight,
+      });
+    } else {
+      this.logger.info('Voice join preflight completed', {
+        guildId,
+        channelId,
+        ...preflight,
+      });
+    }
 
     const voiceConnection = new VoiceConnection(
       this,
@@ -79,29 +98,28 @@ export class Streamer {
       channelId
     );
     this.voiceConnection = voiceConnection;
-
-    return this.connectWithRetries(
+    this.voiceJoinCoordinator = new VoiceJoinCoordinator(
+      this.session,
       voiceConnection,
-      INITIAL_CONNECT_ATTEMPTS,
-      'voice join',
-      async (attempt) => {
-        voiceConnection.prepareForReconnect(attempt, {
-          preserveSession: true,
-          preserveTokens: true,
-        });
-        this.requestVoiceJoin();
-      }
+      this.logger.child('voice-join'),
+      guildId,
+      channelId
     );
+
+    return this.voiceJoinCoordinator.connectInitial();
   }
 
   public async createStream(): Promise<WebRtcConnectionWrapper> {
-    if (!this.voiceConnection) {
-      throw new Error('A voice connection must exist before creating a stream.');
+    if (!this.voiceConnection || !this.desiredVoice) {
+      throw new AppError(
+        'A voice connection must exist before creating a stream.',
+        ExitCode.Gateway
+      );
     }
 
-    const currentUser = this.client.currentUser();
+    const currentUser = this.session.currentUser();
     if (!currentUser) {
-      throw new Error('The companion client is not logged in.');
+      throw new AppError('The companion gateway session is not ready.', ExitCode.Auth);
     }
 
     const { guildId, channelId } = this.voiceConnection;
@@ -116,29 +134,28 @@ export class Streamer {
       channelId
     );
     this.streamConnection = streamConnection;
-
-    return this.connectWithRetries(
+    this.streamJoinCoordinator = new StreamJoinCoordinator(
+      this.session,
       streamConnection,
-      INITIAL_CONNECT_ATTEMPTS,
-      'stream create',
-      async (attempt) => {
-        streamConnection.prepareForReconnect(attempt, {
-          preserveSession: true,
-          preserveTokens: true,
-        });
-        this.requestStreamCreate();
-      }
+      this.logger.child('stream-join'),
+      this.desiredStream.guildId,
+      this.desiredStream.channelId,
+      currentUser.id,
+      () => this.voiceConnection?.voiceSessionId ?? null
     );
+
+    this.signalVideo(true);
+    return this.streamJoinCoordinator.connectInitial();
   }
 
   public stopStream(): void {
-    const currentUser = this.client.currentUser();
+    const currentUser = this.session.currentUser();
     if (!this.streamConnection || !this.voiceConnection || !currentUser) {
       return;
     }
 
     this.streamConnection.stop();
-    this.client.sendGatewayOpcode(GatewayOpcode.StreamDelete, {
+    this.session.sendGatewayOpcode(GatewayOpcode.StreamDelete, {
       stream_key: generateStreamKey(
         'guild',
         this.voiceConnection.guildId,
@@ -147,6 +164,7 @@ export class Streamer {
       ),
     });
     this.signalVideo(false);
+    this.streamJoinCoordinator = undefined;
     this.streamConnection = undefined;
     this.desiredStream = undefined;
   }
@@ -154,9 +172,10 @@ export class Streamer {
   public leaveVoice(): void {
     this.stopStream();
     this.voiceConnection?.stop();
+    this.voiceJoinCoordinator = undefined;
     this.voiceConnection = undefined;
     this.desiredVoice = undefined;
-    this.client.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
+    this.session.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
       guild_id: null,
       channel_id: null,
       self_mute: true,
@@ -170,7 +189,7 @@ export class Streamer {
       return;
     }
 
-    this.client.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
+    this.session.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
       guild_id: this.voiceConnection.guildId,
       channel_id: this.voiceConnection.channelId,
       self_mute: false,
@@ -215,54 +234,8 @@ export class Streamer {
     }
   }
 
-  private async connectWithRetries(
-    connection: BaseMediaConnection,
-    attempts: number,
-    description: string,
-    connect: (attempt: number) => Promise<void>
-  ): Promise<WebRtcConnectionWrapper> {
-    let lastError: AppError | null = null;
-
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      connection.setReconnectAttempt(attempt, 'refreshing');
-
-      try {
-        await connect(attempt);
-        const ready = await connection.waitUntilReady();
-        this.logger.info('Connection became ready', {
-          connectionKind: connection.connectionKind,
-          guildId: connection.guildId,
-          channelId: connection.channelId,
-          description,
-          attempt,
-        });
-        return ready;
-      } catch (error) {
-        lastError = toAppError(error);
-        this.logger.warn('Connection attempt failed', {
-          connectionKind: connection.connectionKind,
-          guildId: connection.guildId,
-          channelId: connection.channelId,
-          description,
-          attempt,
-          message: lastError.message,
-          details: lastError.details,
-        });
-      }
-    }
-
-    throw (
-      lastError ??
-      new AppError(`Unable to complete ${description}.`, ExitCode.Gateway, {
-        connectionKind: connection.connectionKind,
-        guildId: connection.guildId,
-        channelId: connection.channelId,
-      })
-    );
-  }
-
   private handleRawEvent(event: GatewayEvent): void {
-    const currentUser = this.client.currentUser();
+    const currentUser = this.session.currentUser();
     if (!currentUser) {
       return;
     }
@@ -279,6 +252,9 @@ export class Streamer {
         break;
       case 'STREAM_SERVER_UPDATE':
         this.handleStreamServerUpdate(currentUser.id, event);
+        break;
+      case 'STREAM_DELETE':
+        this.handleStreamDelete(currentUser.id, event);
         break;
       default:
         break;
@@ -298,15 +274,16 @@ export class Streamer {
       return;
     }
 
+    if (!this.voiceConnection.isReady && this.voiceJoinCoordinator) {
+      this.voiceJoinCoordinator.handleVoiceStateUpdate(payload);
+      return;
+    }
+
     if (payload.d.channel_id === this.desiredVoice.channelId) {
       this.voiceConnection.setSession(payload.d.session_id);
       if (this.streamConnection && this.desiredStream) {
         this.streamConnection.setSession(payload.d.session_id);
       }
-      return;
-    }
-
-    if (!this.voiceConnection.isReady) {
       return;
     }
 
@@ -324,7 +301,7 @@ export class Streamer {
       return;
     }
 
-    if (payload.d.guild_id !== this.desiredVoice.guildId || !payload.d.endpoint) {
+    if (payload.d.guild_id !== this.desiredVoice.guildId) {
       return;
     }
 
@@ -332,11 +309,24 @@ export class Streamer {
       return;
     }
 
+    if (!this.voiceConnection.isReady && this.voiceJoinCoordinator) {
+      this.voiceJoinCoordinator.handleVoiceServerUpdate(payload);
+      return;
+    }
+
+    if (!payload.d.endpoint) {
+      this.logger.warn('Voice server endpoint was cleared; waiting for recovery', {
+        guildId: this.desiredVoice.guildId,
+        channelId: this.desiredVoice.channelId,
+      });
+      return;
+    }
+
     this.voiceConnection.setTokens(payload.d.endpoint, payload.d.token);
   }
 
   private handleStreamCreate(currentUserId: string, payload: GatewayStreamCreate): void {
-    if (!this.streamConnection || !this.desiredStream || !this.voiceConnection?.voiceSessionId) {
+    if (!this.streamConnection || !this.desiredStream) {
       return;
     }
 
@@ -350,8 +340,15 @@ export class Streamer {
       return;
     }
 
+    if (!this.streamConnection.isReady && this.streamJoinCoordinator) {
+      this.streamJoinCoordinator.handleStreamCreate(payload);
+      return;
+    }
+
     this.streamConnection.setStreamContext(payload.d.rtc_server_id, payload.d.stream_key);
-    this.streamConnection.setSession(this.voiceConnection.voiceSessionId);
+    if (this.voiceConnection?.voiceSessionId) {
+      this.streamConnection.setSession(this.voiceConnection.voiceSessionId);
+    }
   }
 
   private handleStreamServerUpdate(
@@ -372,7 +369,42 @@ export class Streamer {
       return;
     }
 
+    if (!this.streamConnection.isReady && this.streamJoinCoordinator) {
+      this.streamJoinCoordinator.handleStreamServerUpdate(payload);
+      return;
+    }
+
     this.streamConnection.setTokens(payload.d.endpoint, payload.d.token);
+  }
+
+  private handleStreamDelete(currentUserId: string, payload: GatewayStreamDelete): void {
+    if (!this.streamConnection || !this.desiredStream) {
+      return;
+    }
+
+    const parsed = parseStreamKey(payload.d.stream_key);
+    if (
+      parsed.type !== 'guild' ||
+      parsed.userId !== currentUserId ||
+      parsed.channelId !== this.desiredStream.channelId ||
+      parsed.guildId !== this.desiredStream.guildId
+    ) {
+      return;
+    }
+
+    if (!this.streamConnection.isReady && this.streamJoinCoordinator) {
+      this.streamJoinCoordinator.handleStreamDelete(payload);
+      return;
+    }
+
+    this.handleConnectionFatal(
+      this.streamConnection,
+      new AppError('Discord deleted the active Go Live stream.', ExitCode.Gateway, {
+        guildId: this.desiredStream.guildId,
+        channelId: this.desiredStream.channelId,
+        reason: `stream_delete:${payload.d.reason ?? 'unknown'}`,
+      })
+    );
   }
 
   private async recoverConnection(
@@ -392,7 +424,7 @@ export class Streamer {
     }
 
     this.runtimeRecoveryCount = nextAttempt;
-    this.logger.warn('Attempting connection recovery', {
+    this.logger.warn('Reconnect attempt started', {
       ...diagnostics,
       attempt: nextAttempt,
       guildId: connection.guildId,
@@ -405,7 +437,7 @@ export class Streamer {
       await this.recoverStream(nextAttempt);
     }
 
-    this.logger.info('Connection recovery succeeded', {
+    this.logger.info('Reconnect attempt completed', {
       connectionKind: connection.connectionKind,
       guildId: connection.guildId,
       channelId: connection.channelId,
@@ -415,77 +447,28 @@ export class Streamer {
   }
 
   private async recoverVoice(attempt: number): Promise<void> {
-    if (!this.voiceConnection || !this.desiredVoice) {
+    if (!this.voiceConnection || !this.voiceJoinCoordinator || !this.desiredVoice) {
       throw new AppError('No active voice connection is available for recovery.', ExitCode.Gateway);
     }
 
-    this.voiceConnection.prepareForReconnect(attempt);
-    if (this.streamConnection && this.desiredStream) {
-      this.streamConnection.prepareForReconnect(attempt);
-    }
+    await this.voiceJoinCoordinator.refresh(attempt);
 
-    this.requestVoiceJoin();
-    await this.voiceConnection.waitUntilReady();
-
-    if (this.streamConnection && this.desiredStream) {
-      this.requestStreamCreate();
-      await this.streamConnection.waitUntilReady();
+    if (this.streamConnection && this.streamJoinCoordinator && this.desiredStream) {
+      this.signalVideo(true);
+      await this.streamJoinCoordinator.refresh(attempt);
     }
   }
 
   private async recoverStream(attempt: number): Promise<void> {
-    if (!this.streamConnection || !this.desiredStream) {
+    if (!this.streamConnection || !this.streamJoinCoordinator || !this.desiredStream) {
       throw new AppError(
         'No active stream connection is available for recovery.',
         ExitCode.Gateway
       );
     }
 
-    this.streamConnection.prepareForReconnect(attempt);
-    this.requestStreamCreate();
-    await this.streamConnection.waitUntilReady();
-  }
-
-  private requestVoiceJoin(): void {
-    if (!this.desiredVoice) {
-      throw new AppError('The target voice session is not available.', ExitCode.Gateway);
-    }
-
-    this.client.sendGatewayOpcode(GatewayOpcode.VoiceStateUpdate, {
-      guild_id: this.desiredVoice.guildId,
-      channel_id: this.desiredVoice.channelId,
-      self_mute: false,
-      self_deaf: true,
-      self_video: Boolean(this.desiredStream),
-    });
-  }
-
-  private requestStreamCreate(): void {
-    if (!this.voiceConnection || !this.desiredStream) {
-      throw new AppError('The target stream session is not available.', ExitCode.Gateway);
-    }
-
-    const currentUser = this.client.currentUser();
-    if (!currentUser) {
-      throw new AppError('The companion client is not logged in.', ExitCode.Auth);
-    }
-
     this.signalVideo(true);
-    this.client.sendGatewayOpcode(GatewayOpcode.StreamCreate, {
-      type: 'guild',
-      guild_id: this.desiredStream.guildId,
-      channel_id: this.desiredStream.channelId,
-      preferred_region: null,
-    });
-    this.client.sendGatewayOpcode(GatewayOpcode.StreamSetPaused, {
-      stream_key: generateStreamKey(
-        'guild',
-        this.desiredStream.guildId,
-        this.desiredStream.channelId,
-        currentUser.id
-      ),
-      paused: false,
-    });
+    await this.streamJoinCoordinator.refresh(attempt);
   }
 
   private isActiveConnection(connection: BaseMediaConnection): boolean {

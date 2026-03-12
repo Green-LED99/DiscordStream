@@ -1,6 +1,16 @@
 export enum GatewayOpcode {
+  Dispatch = 0,
+  Heartbeat = 1,
+  Identify = 2,
   VoiceStateUpdate = 4,
+  Resume = 6,
+  Reconnect = 7,
+  InvalidSession = 9,
+  Hello = 10,
+  HeartbeatAck = 11,
   StreamCreate = 18,
   StreamDelete = 19,
   StreamSetPaused = 22,
+  RequestChannelInfo = 25,
+  UpdateTimeSpentSessionId = 41,
 }

@@ -23,7 +23,6 @@
   "dependencies": {
     "@lng2004/node-datachannel": "0.32.0-20260202",
     "commander": "^13.1.0",
-    "discord.js-selfbot-v13": "^3.7.1",
     "dotenv": "^16.4.7",
     "node-av": "^5.2.2"
   },
