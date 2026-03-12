@@ -1,7 +1,15 @@
 FROM emscripten/emsdk:latest AS libdave-builder
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git make python3 ca-certificates \
+  && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cmake \
+    git \
+    make \
+    ninja-build \
+    pkg-config \
+    python3 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/libdave
@@ -34,6 +42,10 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev && npm cache clean --force
 
@@ -43,4 +55,3 @@ COPY --from=build /app/docs ./docs
 COPY --from=build /app/README.md ./README.md
 
 ENTRYPOINT ["node", "./dist/src/cli.js"]
-

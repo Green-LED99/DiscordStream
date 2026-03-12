@@ -1,113 +1,336 @@
-# discord-stream
+# DiscordStream
 
-`discord-stream` is a companion CLI that signs in as a separate Discord user client, joins a guild voice channel, creates a Go Live stream, and pushes a direct `.mp4` or `.mkv` URL into the call using Discord's DAVE media encryption.
+`DiscordStream` is a one-shot CLI worker that signs in as a separate Discord user client, joins a guild voice channel, creates a Go Live stream, and forwards a direct `.mp4` or `.mkv` URL into the call using Discord voice/video signaling plus DAVE frame encryption.
 
-The current runtime owns its own Discord user gateway websocket and voice/stream join state machines. It no longer depends on `discord.js-selfbot-v13` for gateway behavior.
+This README is written for AI agents first. It describes what is actually implemented in the repository, how to invoke it safely, where the critical code lives, and what was verified locally.
 
-If another agent needs to operate this repository, start with `docs/agent-runbook.md`. That file is the shortest complete handoff for build, runtime, and failure handling.
+## What This Repository Does
 
-## Status
+- Authenticates with `DISCORD_COMPANION_TOKEN`
+- Opens a custom Discord user gateway session
+- Joins a guild voice channel through the documented `VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE` handshake
+- Creates a Go Live stream through the documented `STREAM_CREATE` + `STREAM_SERVER_UPDATE` handshake
+- Connects voice and stream websockets on voice gateway `v=9`
+- Negotiates DAVE through `libdave`
+- Probes the media URL with `ffprobe`
+- Either copies cheap-enough media or transcodes to a lower-CPU stream profile
+- Emits machine-readable lifecycle events on `stdout`
+- Emits structured operational logs on `stderr`
 
-This repository is a Docker-first implementation. The runtime contract and source code are in place, but the full native stack depends on:
+## Hard Scope
 
-- `libdave` WASM artifacts built from the official source
-- `node-av`
-- `@lng2004/node-datachannel`
-- a valid companion Discord user token
+Supported:
 
-## Quickstart
+- Guild voice channels only
+- `play-url` command only
+- `http` / `https` direct `.mp4` and `.mkv` URLs only
+- Go Live mode only
+- Companion user token only
+- Linux container packaging via Docker
 
-### Local Build
+Not supported:
 
-1. Copy `.env.example` to `.env`.
+- Bot tokens
+- Stage channels
+- DM/GDM calls
+- YouTube, HLS, playlist URLs, or generic webpage URLs
+- Camera mode
+- Multi-job worker reuse
+
+## First-Time Use
+
+If you are another agent and need the shortest reliable path, use Docker first.
+
+1. Create `.env` from [`.env.example`](/Users/harrisonpope/Desktop/DiscordStream/.env.example).
 2. Set `DISCORD_COMPANION_TOKEN`.
-3. Build the official `libdave` artifacts:
+3. Build the image.
+4. Run one `play-url` job.
+5. Watch `stdout` JSON for lifecycle state and `stderr` for diagnostics.
 
-```bash
-npm run build:libdave
+## Required Environment
+
+From [src/config.ts](/Users/harrisonpope/Desktop/DiscordStream/src/config.ts):
+
+- `DISCORD_COMPANION_TOKEN` required
+- `LOG_LEVEL` optional, defaults to `info`
+- `FFMPEG_PATH` optional, defaults to `ffmpeg`
+- `FFPROBE_PATH` optional, defaults to `ffprobe`
+
+Example [`.env`](/Users/harrisonpope/Desktop/DiscordStream/.env):
+
+```dotenv
+DISCORD_COMPANION_TOKEN=your_user_token_here
+LOG_LEVEL=debug
+FFMPEG_PATH=ffmpeg
+FFPROBE_PATH=ffprobe
 ```
 
-4. Install dependencies and compile:
+## Docker Path
+
+The Docker image now includes `ffmpeg` and `ffprobe` in the runtime layer, so the containerized path is self-contained apart from the token and the media URL.
+
+Build:
 
 ```bash
-npm install
-npm run build
+docker buildx build --platform linux/amd64 -t discord-stream:local --load .
 ```
 
-5. Run the CLI:
-
-```bash
-node dist/src/cli.js play-url \
-  --guild-id 123 \
-  --channel-id 456 \
-  --url https://example.com/video.mp4 \
-  --json
-```
-
-### Docker Build
-
-Build the image:
-
-```bash
-docker build -t discord-stream:local .
-```
-
-Run a stream job:
+Run:
 
 ```bash
 docker run --rm \
   --env-file .env \
   discord-stream:local \
   play-url \
-  --guild-id 123 \
-  --channel-id 456 \
+  --guild-id 123456789012345678 \
+  --channel-id 234567890123456789 \
   --url https://example.com/video.mp4 \
   --json
 ```
 
-## Agent Integration Contract
+Stop:
 
-- Invoke one process per stream job.
-- Pass only direct `http` or `https` `.mp4` or `.mkv` URLs.
-- Read lifecycle events from `stdout` as JSON lines.
-- Treat `stderr` as structured logs.
-- Send `SIGTERM` to stop the stream and trigger cleanup.
-- Do not reuse the process for multiple jobs.
+- send `SIGTERM`, or
+- press `Ctrl+C` when running interactively
 
-Example success path on `stdout`:
+The worker handles `SIGINT` and `SIGTERM`, aborts the media loop, leaves voice, destroys the gateway session, and exits.
 
-```json
-{"event":"authenticating","timestamp":"2026-03-09T00:00:00.000Z","details":{"guildId":"123","channelId":"456","mode":"go-live"}}
-{"event":"resolved_media","timestamp":"2026-03-09T00:00:01.000Z","details":{"url":"https://example.com/video.mp4","streamCount":2}}
-{"event":"joining_voice","timestamp":"2026-03-09T00:00:02.000Z","details":{"guildId":"123","channelId":"456","userId":"789"}}
-{"event":"starting_stream","timestamp":"2026-03-09T00:00:03.000Z","details":{"url":"https://example.com/video.mp4","mode":"go-live"}}
-{"event":"completed","timestamp":"2026-03-09T00:10:03.000Z","details":{"guildId":"123","channelId":"456"}}
+## Local Development Path
+
+Use this when you need to patch code, run tests, or debug without Docker.
+
+Prerequisites:
+
+- Node `22.x`
+- `ffmpeg`
+- `ffprobe`
+- `EMSDK` set for the `libdave` build
+
+Build:
+
+```bash
+npm install
+npm run build:libdave
+npm run build
 ```
 
-Failure shape:
+Run:
 
-```json
-{"event":"failed","timestamp":"2026-03-09T00:00:03.000Z","details":{"message":"The provided media URL is invalid.","exitCode":40}}
+```bash
+node dist/src/cli.js play-url \
+  --guild-id 123456789012345678 \
+  --channel-id 234567890123456789 \
+  --url https://example.com/video.mp4 \
+  --json
 ```
 
-Typical Discord join failures also include `details.reason`, for example `join_timeout_no_gateway_response`, `join_timeout_missing_voice_state`, `join_timeout_missing_voice_server`, or `stream_delete:stream_full`.
+`npm run build:libdave` clones the official `discord/libdave` repo and writes artifacts into [vendor/libdave](/Users/harrisonpope/Desktop/DiscordStream/vendor/libdave). The runtime loader in [src/dave/libdave.ts](/Users/harrisonpope/Desktop/DiscordStream/src/dave/libdave.ts) requires `libdave.js` and `libdave.wasm` to exist there.
+
+## CLI Contract
+
+The public CLI surface is defined in [src/commands/play-url.ts](/Users/harrisonpope/Desktop/DiscordStream/src/commands/play-url.ts).
+
+Command:
+
+```bash
+discord-stream play-url \
+  --guild-id <snowflake> \
+  --channel-id <snowflake> \
+  --url <direct-mp4-or-mkv-url> \
+  [--mode go-live] \
+  [--json]
+```
+
+Facts:
+
+- `--guild-id` must be a Discord snowflake
+- `--channel-id` must be a Discord snowflake
+- `--url` must resolve to a direct `.mp4` or `.mkv`
+- `--mode` only accepts `go-live`
+- `--json` is accepted for compatibility, but lifecycle output is always JSON lines
+
+## Lifecycle Output
+
+Lifecycle events are emitted by [src/lifecycle.ts](/Users/harrisonpope/Desktop/DiscordStream/src/lifecycle.ts) to `stdout`.
+
+Event sequence:
+
+- `authenticating`
+- `resolved_media`
+- `joining_voice`
+- `starting_stream`
+- `completed`
+- `failed`
+
+Example success:
+
+```json
+{"event":"authenticating","timestamp":"2026-03-11T18:00:00.000Z","details":{"guildId":"123","channelId":"456","mode":"go-live"}}
+{"event":"resolved_media","timestamp":"2026-03-11T18:00:01.000Z","details":{"url":"https://example.com/video.mp4","streamCount":2}}
+{"event":"joining_voice","timestamp":"2026-03-11T18:00:02.000Z","details":{"guildId":"123","channelId":"456","userId":"789"}}
+{"event":"starting_stream","timestamp":"2026-03-11T18:00:03.000Z","details":{"url":"https://example.com/video.mp4","mode":"go-live"}}
+{"event":"completed","timestamp":"2026-03-11T18:05:03.000Z","details":{"guildId":"123","channelId":"456"}}
+```
+
+Example failure:
+
+```json
+{"event":"failed","timestamp":"2026-03-11T18:00:03.000Z","details":{"message":"Timed out waiting for Discord to complete the voice join handshake.","exitCode":30,"reason":"join_timeout_missing_voice_server"}}
+```
+
+`stderr` is reserved for logs. Treat it as diagnostics, not part of the stable machine contract.
 
 ## Exit Codes
 
-- `0`: success
-- `10`: configuration error
-- `20`: authentication error
-- `30`: Discord gateway / voice signaling failure
-- `40`: media validation or transcoding failure
-- `50`: DAVE failure
-- `60`: transport failure
-- `70`: unexpected internal failure
+From [src/errors.ts](/Users/harrisonpope/Desktop/DiscordStream/src/errors.ts):
 
-## Docs
+- `0` success
+- `10` configuration failure
+- `20` authentication failure
+- `30` Discord gateway / voice / stream signaling failure
+- `40` media validation or transcoding failure
+- `50` DAVE failure
+- `60` RTP / WebRTC transport failure
+- `70` unexpected internal failure
 
-- `docs/architecture.md`
-- `docs/agent-runbook.md`
-- `docs/dave-notes.md`
-- `docs/cli-contract.md`
-- `docs/ops.md`
-- `docs/adr/0001-companion-user-client.md`
+## Media Pipeline
+
+The media path is orchestrated in [src/runtime/run-stream-job.ts](/Users/harrisonpope/Desktop/DiscordStream/src/runtime/run-stream-job.ts).
+
+Current behavior:
+
+- Validates the URL before authenticating
+- Probes streams with `ffprobe`
+- Selects a `TranscodePlan`
+- Spawns `ffmpeg` into a NUT stream
+- Plays audio/video through the existing voice + stream transport
+
+Current low-CPU defaults:
+
+- Copy video when the source is already `H264`, `<=720p`, and `<=24fps`
+- Copy audio when the source is already `Opus`, `48kHz`, and `<=2` channels
+- Otherwise transcode to:
+  - `H264`
+  - `720p`
+  - `24fps`
+  - `libx264 superfast`
+  - `zerolatency`
+  - target `1800k`
+  - max `3500k`
+  - video encode threads capped at `2`
+
+Relevant files:
+
+- [src/media/transcode-plan.ts](/Users/harrisonpope/Desktop/DiscordStream/src/media/transcode-plan.ts)
+- [src/media/ffmpeg.ts](/Users/harrisonpope/Desktop/DiscordStream/src/media/ffmpeg.ts)
+- [src/media/ffprobe.ts](/Users/harrisonpope/Desktop/DiscordStream/src/media/ffprobe.ts)
+- [src/media/play-stream.ts](/Users/harrisonpope/Desktop/DiscordStream/src/media/play-stream.ts)
+- [src/media/pipeline-stats.ts](/Users/harrisonpope/Desktop/DiscordStream/src/media/pipeline-stats.ts)
+
+## Discord Protocol Model
+
+The runtime uses a custom user gateway session rather than `discord.js-selfbot-v13`.
+
+### Main gateway
+
+Implemented in [src/discord/user-gateway-session.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/user-gateway-session.ts):
+
+- Gateway version `9`
+- Desktop-style Identify payload
+- nonzero capabilities value aligned with the documented example
+- heartbeat scheduling plus immediate response to gateway heartbeat requests
+- sequence tracking
+- Resume vs re-Identify close-code handling
+- guild/channel cache for preflight diagnostics
+
+### Voice join
+
+Implemented in [src/discord/join/voice-join-coordinator.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/join/voice-join-coordinator.ts):
+
+- sends `VOICE_STATE_UPDATE`
+- waits for both `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`
+- preserves partial handshake state across retries
+- distinguishes:
+  - `join_timeout_no_gateway_response`
+  - `join_timeout_missing_voice_state`
+  - `join_timeout_missing_voice_server`
+- treats `VOICE_SERVER_UPDATE.endpoint = null` as temporary reallocation
+
+### Stream join
+
+Implemented in [src/discord/join/stream-join-coordinator.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/join/stream-join-coordinator.ts):
+
+- sends `STREAM_CREATE`
+- waits for both `STREAM_CREATE` and `STREAM_SERVER_UPDATE`
+- stops retrying immediately on `STREAM_DELETE`
+- surfaces `stream_delete:<reason>`
+
+### Voice and stream websockets
+
+Implemented in [src/discord/voice/base-media-connection.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/voice/base-media-connection.ts):
+
+- voice gateway `v=9`
+- `channel_id` included on voice Identify and Resume
+- heartbeat timer plus immediate response to voice heartbeat requests
+- DAVE negotiation through `DaveSessionManager`
+- WebRTC renegotiation support
+
+### Runtime recovery
+
+Orchestrated in [src/discord/streamer.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/streamer.ts):
+
+- bounded runtime recovery attempts
+- long-lived routing for `VOICE_*` and `STREAM_*` gateway updates
+- refreshes live connections when Discord rotates tokens or endpoints
+- keeps the high-level media pipeline object stable during reconnect windows
+
+## Code Map
+
+If you need to change behavior, start here:
+
+- [src/cli.ts](/Users/harrisonpope/Desktop/DiscordStream/src/cli.ts): top-level CLI
+- [src/runtime/run-stream-job.ts](/Users/harrisonpope/Desktop/DiscordStream/src/runtime/run-stream-job.ts): one-shot job orchestration
+- [src/discord/user-gateway-session.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/user-gateway-session.ts): user gateway session
+- [src/discord/streamer.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/streamer.ts): voice + stream orchestration
+- [src/discord/join/voice-join-coordinator.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/join/voice-join-coordinator.ts): initial and refresh voice join
+- [src/discord/join/stream-join-coordinator.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/join/stream-join-coordinator.ts): initial and refresh stream join
+- [src/discord/voice/base-media-connection.ts](/Users/harrisonpope/Desktop/DiscordStream/src/discord/voice/base-media-connection.ts): voice websocket, DAVE, WebRTC
+- [src/dave/session-manager.ts](/Users/harrisonpope/Desktop/DiscordStream/src/dave/session-manager.ts): DAVE session manager
+- [src/transport/webrtc-connection.ts](/Users/harrisonpope/Desktop/DiscordStream/src/transport/webrtc-connection.ts): RTP / peer connection wrapper
+
+## Operational Guardrails For Agents
+
+- Do not try to extract or generate a Discord user token. The runtime assumes the token already exists.
+- Do not feed webpage URLs, magnet links, or manifests into `--url`.
+- Do not assume bot tokens are supported; the runtime rejects them explicitly.
+- Do not reuse a worker process for multiple stream jobs.
+- Always watch `stderr` when debugging join failures. `stdout` alone is too coarse.
+- If the first join fails, inspect `details.reason` from the `failed` event before changing code.
+
+## Verification Status
+
+Re-verified locally on March 11, 2026:
+
+- `npm run lint`
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+
+Also re-audited the main gateway and voice join path against:
+
+- [Discord API docs](https://docs.discord.food/topics/gateway)
+- [Discord voice connection docs](https://docs.discord.food/topics/voice-connections)
+
+What is still outside local verification:
+
+- A live Discord E2E stream with a real companion token and private guild
+- Docker image execution against a real voice channel after these latest gateway fixes
+
+## Related Docs
+
+- [docs/agent-runbook.md](/Users/harrisonpope/Desktop/DiscordStream/docs/agent-runbook.md)
+- [docs/architecture.md](/Users/harrisonpope/Desktop/DiscordStream/docs/architecture.md)
+- [docs/cli-contract.md](/Users/harrisonpope/Desktop/DiscordStream/docs/cli-contract.md)
+- [docs/dave-notes.md](/Users/harrisonpope/Desktop/DiscordStream/docs/dave-notes.md)
+- [docs/ops.md](/Users/harrisonpope/Desktop/DiscordStream/docs/ops.md)
+- [docs/adr/0001-companion-user-client.md](/Users/harrisonpope/Desktop/DiscordStream/docs/adr/0001-companion-user-client.md)
