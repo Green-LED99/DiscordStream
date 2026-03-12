@@ -21,12 +21,12 @@ function asSendBuffer(frame: Uint8Array | Buffer): Buffer {
 
 export class WebRtcConnectionWrapper {
   private rtc?: NodeDataChannelModule;
-  private peerConnection?: PeerConnection;
-  private audioTrack?: Track;
-  private videoTrack?: Track;
-  private audioPacketizer?: RtpPacketizer;
-  private videoPacketizer?: H264RtpPacketizer;
-  private videoCodec?: SupportedVideoCodec;
+  private peerConnection: PeerConnection | undefined;
+  private audioTrack: Track | undefined;
+  private videoTrack: Track | undefined;
+  private audioPacketizer: RtpPacketizer | undefined;
+  private videoPacketizer: H264RtpPacketizer | undefined;
+  private videoCodec: SupportedVideoCodec | undefined;
 
   public constructor(
     private readonly mediaConnectionRef: BaseMediaConnection,
@@ -35,6 +35,7 @@ export class WebRtcConnectionWrapper {
 
   public async initWebRtc(): Promise<PeerConnection> {
     const rtc = await this.loadRtcModule();
+    this.close();
     this.peerConnection = new rtc.PeerConnection('', {
       iceServers: ['stun:stun.l.google.com:19302'],
     });
@@ -59,6 +60,12 @@ export class WebRtcConnectionWrapper {
 
   public close(): void {
     this.peerConnection?.close();
+    this.peerConnection = undefined;
+    this.audioTrack = undefined;
+    this.videoTrack = undefined;
+    this.audioPacketizer = undefined;
+    this.videoPacketizer = undefined;
+    this.videoCodec = undefined;
   }
 
   public get mediaConnection(): BaseMediaConnection {

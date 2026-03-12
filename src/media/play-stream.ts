@@ -42,20 +42,31 @@ export async function playStream(
       connection.mediaConnection.setVideoAttributes(false);
     };
 
+    const onFatal = (error: Error) => {
+      cleanup();
+      abortSignal?.removeEventListener('abort', onAbort);
+      streamer.offFatal(onFatal);
+      reject(error);
+    };
+
     const onAbort = () => {
       cleanup();
+      streamer.offFatal(onFatal);
       reject(abortSignal?.reason ?? new Error('Aborted'));
     };
 
     abortSignal?.addEventListener('abort', onAbort, { once: true });
+    streamer.onFatal(onFatal);
     videoStream.once('finish', () => {
       cleanup();
       abortSignal?.removeEventListener('abort', onAbort);
+      streamer.offFatal(onFatal);
       resolve();
     });
     videoStream.once('error', (error) => {
       cleanup();
       abortSignal?.removeEventListener('abort', onAbort);
+      streamer.offFatal(onFatal);
       reject(error);
     });
   });

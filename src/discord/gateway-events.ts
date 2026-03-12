@@ -6,6 +6,8 @@ export type GatewayEventGeneric<Type extends string, Data> = {
 export type GatewayVoiceStateUpdate = GatewayEventGeneric<
   'VOICE_STATE_UPDATE',
   {
+    guild_id?: string | null;
+    channel_id?: string | null;
     user_id: string;
     session_id: string;
   }
@@ -15,8 +17,8 @@ export type GatewayVoiceServerUpdate = GatewayEventGeneric<
   'VOICE_SERVER_UPDATE',
   {
     guild_id: string;
-    channel_id?: string;
-    endpoint: string;
+    channel_id?: string | null;
+    endpoint: string | null;
     token: string;
   }
 >;

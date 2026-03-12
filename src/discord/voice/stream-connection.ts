@@ -1,6 +1,11 @@
 import { BaseMediaConnection } from './base-media-connection.js';
+import type { ConnectionKind } from './reconnect.js';
 
 export class StreamConnection extends BaseMediaConnection {
+  public override get connectionKind(): ConnectionKind {
+    return 'stream';
+  }
+
   private rtcServerId: string | null = null;
   private currentStreamKey: string | null = null;
 

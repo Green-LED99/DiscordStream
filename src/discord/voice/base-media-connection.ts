@@ -16,6 +16,15 @@ import type {
   VoiceSelectProtocolAck,
   VoiceStreamDescriptor,
 } from '../voice-types.js';
+import {
+  type ConnectionKind,
+  type ReconnectDiagnostics,
+  type ReconnectState,
+  type RecoveryTrigger,
+  classifyVoiceCloseCode,
+} from './reconnect.js';
+
+const READY_TIMEOUT_MS = 15_000;
 
 export type WebRtcParameters = {
   address: string;
@@ -41,6 +50,12 @@ type ConnectionState = {
 
 export abstract class BaseMediaConnection extends EventEmitter {
   private heartbeatTimer: NodeJS.Timeout | undefined;
+  private heartbeatIntervalMs: number | undefined;
+  private lastHeartbeatSentAt: number | undefined;
+  private lastHeartbeatAckAt: number | undefined;
+  private missedHeartbeatAcks = 0;
+  private lastCloseCode: number | undefined;
+  private lastCloseReason: string | undefined;
   private webSocket: WebSocket | null = null;
   private connectionState: ConnectionState = {
     hasSession: false,
@@ -49,15 +64,21 @@ export abstract class BaseMediaConnection extends EventEmitter {
     resuming: false,
   };
   private sequenceNumber = -1;
-  private webRtcWrapper: WebRtcConnectionWrapper;
+  private readonly webRtcWrapper: WebRtcConnectionWrapper;
   private currentWebRtcParameters: WebRtcParameters | null = null;
   private closed = false;
   private voiceServer: string | null = null;
   private voiceToken: string | null = null;
   private sessionId: string | null = null;
   private daveProtocolVersion = 0;
-  private daveSessionManager?: DaveSessionManager;
-  private connectedUsers = new Set<string>();
+  private daveSessionManager: DaveSessionManager | undefined;
+  private readonly connectedUsers = new Set<string>();
+  private ready = false;
+  private reconnectAttempt = 0;
+  private reconnectState: ReconnectState = 'idle';
+  private speakingEnabled = false;
+  private videoEnabled = false;
+  private videoAttributes: VideoAttributes | undefined;
 
   public readonly daveEncryptor: DaveMediaEncryptor;
 
@@ -67,8 +88,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
     protected readonly logger: Logger,
     public readonly guildId: string | null,
     public readonly userId: string,
-    public readonly channelId: string,
-    private readonly onReady: (connection: WebRtcConnectionWrapper) => void
+    public readonly channelId: string
   ) {
     super();
     this.daveEncryptor = new DaveMediaEncryptor(dave);
@@ -78,6 +98,8 @@ export abstract class BaseMediaConnection extends EventEmitter {
   public abstract get serverId(): string | null;
 
   public abstract get daveChannelId(): string;
+
+  public abstract get connectionKind(): ConnectionKind;
 
   public get type(): 'guild' | 'call' {
     return this.guildId ? 'guild' : 'call';
@@ -103,6 +125,10 @@ export abstract class BaseMediaConnection extends EventEmitter {
     return this.daveProtocolVersion > 0;
   }
 
+  public get isReady(): boolean {
+    return this.ready;
+  }
+
   public get audioSsrc(): number {
     if (!this.currentWebRtcParameters) {
       throw new AppError('Audio SSRC is not available yet.', ExitCode.Transport);
@@ -121,14 +147,51 @@ export abstract class BaseMediaConnection extends EventEmitter {
 
   public stop(): void {
     this.closed = true;
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = undefined;
-    }
-
+    this.ready = false;
+    this.clearHeartbeatTimer();
     this.webRtcWrapper.close();
     this.webSocket?.close();
+    this.webSocket = null;
     this.daveEncryptor.destroy();
+  }
+
+  public waitUntilReady(timeoutMs = READY_TIMEOUT_MS): Promise<WebRtcConnectionWrapper> {
+    if (this.ready) {
+      return Promise.resolve(this.webRtcWrapper);
+    }
+
+    return new Promise<WebRtcConnectionWrapper>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(
+          new AppError(
+            'Timed out waiting for the voice connection to become ready.',
+            ExitCode.Gateway,
+            {
+              timeoutMs,
+              ...this.logContext(),
+            }
+          )
+        );
+      }, timeoutMs);
+
+      const onReady = () => {
+        cleanup();
+        resolve(this.webRtcWrapper);
+      };
+      const onFatal = (error: AppError) => {
+        cleanup();
+        reject(error);
+      };
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.off('ready', onReady);
+        this.off('fatal_disconnect', onFatal);
+      };
+
+      this.on('ready', onReady);
+      this.on('fatal_disconnect', onFatal);
+    });
   }
 
   public setSession(sessionId: string): void {
@@ -144,7 +207,47 @@ export abstract class BaseMediaConnection extends EventEmitter {
     this.start();
   }
 
+  public setReconnectAttempt(attempt: number, state: ReconnectState): void {
+    this.reconnectAttempt = attempt;
+    this.reconnectState = state;
+  }
+
+  public prepareForReconnect(attempt: number): void {
+    this.setReconnectAttempt(attempt, 'refreshing');
+    this.ready = false;
+    this.connectionState = {
+      hasSession: false,
+      hasToken: false,
+      started: false,
+      resuming: false,
+    };
+    this.sequenceNumber = -1;
+    this.currentWebRtcParameters = null;
+    this.voiceServer = null;
+    this.voiceToken = null;
+    this.sessionId = null;
+    this.lastCloseCode = undefined;
+    this.lastCloseReason = undefined;
+    this.heartbeatIntervalMs = undefined;
+    this.lastHeartbeatSentAt = undefined;
+    this.lastHeartbeatAckAt = undefined;
+    this.missedHeartbeatAcks = 0;
+    this.clearHeartbeatTimer();
+    this.resetDaveSession();
+    this.webRtcWrapper.close();
+
+    const socket = this.webSocket;
+    this.webSocket = null;
+    socket?.close();
+  }
+
   public setSpeaking(speaking: boolean): void {
+    this.speakingEnabled = speaking;
+
+    if (!this.currentWebRtcParameters) {
+      return;
+    }
+
     this.sendOpcode(VoiceOpcode.Speaking, {
       delay: 0,
       speaking: speaking ? 1 : 0,
@@ -155,15 +258,15 @@ export abstract class BaseMediaConnection extends EventEmitter {
   public setVideoAttributes(enabled: false): void;
   public setVideoAttributes(enabled: true, attributes: VideoAttributes): void;
   public setVideoAttributes(enabled: boolean, attributes?: VideoAttributes): void {
-    if (!this.currentWebRtcParameters) {
-      throw new AppError(
-        'Video attributes were set before the voice connection was ready.',
-        ExitCode.Transport
-      );
-    }
-
-    const { audioSsrc, videoSsrc, rtxSsrc } = this.currentWebRtcParameters;
     if (!enabled) {
+      this.videoEnabled = false;
+      this.videoAttributes = undefined;
+
+      if (!this.currentWebRtcParameters) {
+        return;
+      }
+
+      const { audioSsrc } = this.currentWebRtcParameters;
       this.sendOpcode(VoiceOpcode.Video, {
         audio_ssrc: audioSsrc,
         video_ssrc: 0,
@@ -177,6 +280,14 @@ export abstract class BaseMediaConnection extends EventEmitter {
       throw new AppError('Enabled video requires explicit video attributes.', ExitCode.Transport);
     }
 
+    this.videoEnabled = true;
+    this.videoAttributes = attributes;
+
+    if (!this.currentWebRtcParameters) {
+      return;
+    }
+
+    const { audioSsrc, videoSsrc, rtxSsrc } = this.currentWebRtcParameters;
     this.sendOpcode(VoiceOpcode.Video, {
       audio_ssrc: audioSsrc,
       video_ssrc: videoSsrc,
@@ -219,32 +330,44 @@ export abstract class BaseMediaConnection extends EventEmitter {
     this.webSocket.binaryType = 'arraybuffer';
 
     this.webSocket.addEventListener('open', () => {
-      if (this.connectionState.resuming) {
-        this.connectionState.resuming = false;
-        this.resume();
-      } else {
+      this.logger.info('Voice websocket opened', this.logContext());
+
+      try {
+        if (this.connectionState.resuming) {
+          this.resume();
+          return;
+        }
+
         this.identify();
+      } catch (error) {
+        this.emitFatalDisconnect(
+          error instanceof AppError
+            ? error
+            : new AppError(
+                error instanceof Error ? error.message : 'Voice socket failed during open.',
+                ExitCode.Gateway,
+                this.logContext()
+              )
+        );
       }
     });
 
     this.webSocket.addEventListener('message', (event) => {
-      void this.handleMessage(event.data);
+      void this.handleMessage(event.data).catch((error) => {
+        this.emitFatalDisconnect(
+          error instanceof AppError
+            ? error
+            : new AppError(
+                error instanceof Error ? error.message : 'Voice socket message handling failed.',
+                ExitCode.Gateway,
+                this.logContext()
+              )
+        );
+      });
     });
 
     this.webSocket.addEventListener('close', (event) => {
-      const canResume = event.code === 4015 || event.code < 4000;
-      const wasStarted = this.connectionState.started;
-
-      if (this.heartbeatTimer) {
-        clearInterval(this.heartbeatTimer);
-        this.heartbeatTimer = undefined;
-      }
-      this.connectionState.started = false;
-
-      if (!this.closed && wasStarted && canResume) {
-        this.connectionState.resuming = true;
-        this.start();
-      }
+      this.handleSocketClose(event.code, event.reason || undefined);
     });
   }
 
@@ -252,8 +375,24 @@ export abstract class BaseMediaConnection extends EventEmitter {
     const peerConnection = await this.webRtcWrapper.initWebRtc();
 
     peerConnection.onStateChange((state: string) => {
-      if (state === 'closed' && !this.closed) {
-        void this.setProtocols();
+      if (
+        state === 'closed' &&
+        !this.closed &&
+        this.connectionState.started &&
+        this.ws?.readyState === WebSocket.OPEN &&
+        this.reconnectState === 'idle'
+      ) {
+        void this.setProtocols().catch((error) => {
+          this.emitFatalDisconnect(
+            error instanceof AppError
+              ? error
+              : new AppError(
+                  error instanceof Error ? error.message : 'Failed to renegotiate WebRTC.',
+                  ExitCode.Transport,
+                  this.logContext()
+                )
+          );
+        });
       }
     });
 
@@ -353,6 +492,15 @@ export abstract class BaseMediaConnection extends EventEmitter {
       case VoiceOpcode.SelectProtocolAck:
         await this.handleSelectProtocolAck(payload.d);
         break;
+      case VoiceOpcode.HeartbeatAck:
+        this.lastHeartbeatAckAt = performance.now();
+        this.missedHeartbeatAcks = 0;
+        break;
+      case VoiceOpcode.Resumed:
+        this.connectionState.resuming = false;
+        this.reconnectState = 'idle';
+        this.logger.info('Voice websocket resumed', this.logContext());
+        break;
       case VoiceOpcode.ClientsConnect:
         for (const userId of payload.d.user_ids) {
           this.connectedUsers.add(userId);
@@ -427,8 +575,11 @@ export abstract class BaseMediaConnection extends EventEmitter {
     };
 
     await this.setProtocols();
-    this.setVideoAttributes(false);
-    this.onReady(this.webRtcWrapper);
+    this.connectionState.resuming = false;
+    this.ready = true;
+    this.reconnectState = 'idle';
+    this.reapplyMediaState();
+    this.emit('ready', this.webRtcWrapper);
   }
 
   private async handleSelectProtocolAck(payload: VoiceSelectProtocolAck): Promise<void> {
@@ -470,16 +621,161 @@ export abstract class BaseMediaConnection extends EventEmitter {
   }
 
   private setupHeartbeat(intervalMs: number): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-    }
+    this.heartbeatIntervalMs = intervalMs;
+    this.lastHeartbeatAckAt ??= performance.now();
+    this.missedHeartbeatAcks = 0;
+    this.clearHeartbeatTimer();
 
     this.heartbeatTimer = setInterval(() => {
-      this.sendOpcode(VoiceOpcode.Heartbeat, {
-        t: Date.now(),
-        seq_ack: this.sequenceNumber,
-      });
+      this.sendHeartbeat();
     }, intervalMs);
+    this.heartbeatTimer.unref?.();
+
+    this.sendHeartbeat();
+  }
+
+  private sendHeartbeat(): void {
+    if (this.webSocket?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (
+      this.lastHeartbeatSentAt !== undefined &&
+      (this.lastHeartbeatAckAt ?? 0) < this.lastHeartbeatSentAt
+    ) {
+      this.missedHeartbeatAcks += 1;
+    } else {
+      this.missedHeartbeatAcks = 0;
+    }
+
+    if (this.missedHeartbeatAcks >= 2) {
+      this.logger.warn(
+        'Voice heartbeat timed out',
+        this.logContext({ trigger: 'heartbeat_timeout' })
+      );
+      this.requestRecovery('heartbeat_timeout');
+      return;
+    }
+
+    this.lastHeartbeatSentAt = performance.now();
+    this.sendOpcode(VoiceOpcode.Heartbeat, {
+      t: Date.now(),
+      seq_ack: this.sequenceNumber,
+    });
+  }
+
+  private handleSocketClose(code: number, reason: string | undefined): void {
+    const wasStarted = this.connectionState.started;
+
+    this.lastCloseCode = code;
+    this.lastCloseReason = reason;
+    this.ready = false;
+    this.clearHeartbeatTimer();
+    this.connectionState.started = false;
+
+    const classification = classifyVoiceCloseCode(code);
+    this.logger.warn('Voice websocket closed', this.logContext({ classification }));
+
+    if (this.closed || !wasStarted) {
+      return;
+    }
+
+    if (classification === 'resume') {
+      this.reconnectState = 'resuming';
+      this.connectionState.resuming = true;
+      this.start();
+      return;
+    }
+
+    if (classification === 'refresh') {
+      this.requestRecovery('socket_close');
+      return;
+    }
+
+    this.reconnectState = 'failed';
+    this.emitFatalDisconnect(
+      new AppError(
+        'Discord closed the voice websocket with a fatal close code.',
+        ExitCode.Gateway,
+        {
+          ...this.logContext(),
+        }
+      )
+    );
+  }
+
+  private requestRecovery(trigger: RecoveryTrigger): void {
+    if (this.closed || this.reconnectState === 'refreshing' || this.reconnectState === 'failed') {
+      return;
+    }
+
+    this.reconnectState = 'refreshing';
+    this.ready = false;
+    this.connectionState.started = false;
+    this.clearHeartbeatTimer();
+    const socket = this.webSocket;
+    this.webSocket = null;
+    socket?.close();
+
+    const diagnostics: ReconnectDiagnostics = {
+      connectionKind: this.connectionKind,
+      attempt: this.reconnectAttempt,
+      trigger,
+      state: this.reconnectState,
+      ...(this.lastCloseCode !== undefined ? { closeCode: this.lastCloseCode } : {}),
+      ...(this.lastCloseReason ? { closeReason: this.lastCloseReason } : {}),
+    };
+    this.streamer.handleConnectionRecoveryRequested(this, diagnostics);
+  }
+
+  private emitFatalDisconnect(error: AppError): void {
+    if (this.reconnectState !== 'failed') {
+      this.reconnectState = 'failed';
+    }
+
+    this.emit('fatal_disconnect', error);
+    this.streamer.handleConnectionFatal(this, error);
+  }
+
+  private clearHeartbeatTimer(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
+  private resetDaveSession(): void {
+    this.daveSessionManager = undefined;
+    this.daveProtocolVersion = 0;
+    this.daveEncryptor.updateSelfKeyRatchet(null);
+  }
+
+  private reapplyMediaState(): void {
+    if (this.speakingEnabled) {
+      this.setSpeaking(true);
+    } else {
+      this.setSpeaking(false);
+    }
+
+    if (this.videoEnabled && this.videoAttributes) {
+      this.setVideoAttributes(true, this.videoAttributes);
+      return;
+    }
+
+    this.setVideoAttributes(false);
+  }
+
+  private logContext(context?: Record<string, unknown>): Record<string, unknown> {
+    return {
+      connectionKind: this.connectionKind,
+      guildId: this.guildId,
+      channelId: this.channelId,
+      reconnectAttempt: this.reconnectAttempt,
+      reconnectState: this.reconnectState,
+      ...(this.lastCloseCode !== undefined ? { closeCode: this.lastCloseCode } : {}),
+      ...(this.lastCloseReason ? { closeReason: this.lastCloseReason } : {}),
+      ...context,
+    };
   }
 }
 
