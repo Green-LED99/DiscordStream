@@ -58,6 +58,7 @@ docker run --rm \
 - `stderr` is reserved for structured logs as JSON lines.
 - Parse `stdout` only for job state.
 - Preserve `stderr` for debugging, but do not treat it as the contract surface.
+- Join diagnostics now appear on `stderr` with explicit handshake milestones and reconnect attempts.
 
 Expected lifecycle events:
 
@@ -78,6 +79,16 @@ Expected lifecycle events:
 - `50`: DAVE
 - `60`: transport
 - `70`: internal failure
+
+Common `failed.details.reason` values on exit code `30`:
+
+- `join_timeout_no_gateway_response`
+- `join_timeout_missing_voice_state`
+- `join_timeout_missing_voice_server`
+- `stream_delete:stream_full`
+- `stream_delete:unauthorized`
+- `stream_delete:invalid_channel`
+- `voice_ws_fatal_close`
 
 ## Recommended Agent Flow
 
@@ -120,8 +131,9 @@ function stopStream() {
 ## Build And Runtime Assumptions
 
 - Supported deployment target: Linux `x86_64` Docker image.
-- Default transcode profile: `H.264 + Opus`, `720p30`.
+- Default transcode profile: `H.264 + Opus`, `720p24`.
 - DAVE is attempted first. If Discord negotiates protocol version `0`, the worker downgrades to passthrough mode.
+- The worker owns its own user gateway session and does not depend on `discord.js-selfbot-v13`.
 - The worker exits after stream completion, failure, or signal-triggered shutdown.
 
 ## When Not To Use This Worker

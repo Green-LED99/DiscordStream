@@ -2,6 +2,8 @@
 
 `discord-stream` is a companion CLI that signs in as a separate Discord user client, joins a guild voice channel, creates a Go Live stream, and pushes a direct `.mp4` or `.mkv` URL into the call using Discord's DAVE media encryption.
 
+The current runtime owns its own Discord user gateway websocket and voice/stream join state machines. It no longer depends on `discord.js-selfbot-v13` for gateway behavior.
+
 If another agent needs to operate this repository, start with `docs/agent-runbook.md`. That file is the shortest complete handoff for build, runtime, and failure handling.
 
 ## Status
@@ -87,6 +89,8 @@ Failure shape:
 ```json
 {"event":"failed","timestamp":"2026-03-09T00:00:03.000Z","details":{"message":"The provided media URL is invalid.","exitCode":40}}
 ```
+
+Typical Discord join failures also include `details.reason`, for example `join_timeout_no_gateway_response`, `join_timeout_missing_voice_state`, `join_timeout_missing_voice_server`, or `stream_delete:stream_full`.
 
 ## Exit Codes
 

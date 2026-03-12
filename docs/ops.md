@@ -69,9 +69,17 @@ colima stop
 ## Failure Modes
 
 - Authentication failures typically mean the companion token is invalid or Discord exposed a bot identity.
+- Gateway failures now include explicit join reason codes such as `join_timeout_no_gateway_response`, `join_timeout_missing_voice_state`, `join_timeout_missing_voice_server`, and `stream_delete:*`.
 - DAVE failures usually mean missing `libdave` artifacts or voice-gateway negotiation problems.
 - Transport failures typically happen when WebRTC negotiation or RTP packetization fails.
 - Media failures usually mean the URL is not a direct file URL or the host blocked `HEAD` and range requests.
+
+## Discord Session Model
+
+- The worker now opens and maintains its own Discord user gateway websocket.
+- Voice join waits for both `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`.
+- Go Live creation waits for both `STREAM_CREATE` and `STREAM_SERVER_UPDATE`.
+- Runtime disconnect recovery replays the documented handshakes instead of only retrying the voice websocket.
 
 ## Operational Procedure
 
