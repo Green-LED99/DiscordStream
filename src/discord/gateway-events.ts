@@ -35,7 +35,7 @@ export type GatewayStreamServerUpdate = GatewayEventGeneric<
   'STREAM_SERVER_UPDATE',
   {
     stream_key: string;
-    endpoint: string;
+    endpoint: string | null;
     token: string;
   }
 >;

@@ -30,6 +30,7 @@ export class StreamJoinCoordinator {
     token: null,
     sawStreamCreate: false,
     sawStreamServer: false,
+    sawNullEndpoint: false,
     deletedReason: null,
   };
   private pendingAttempt:
@@ -126,6 +127,17 @@ export class StreamJoinCoordinator {
     }
 
     this.handshake.sawStreamServer = true;
+    if (!payload.d.endpoint) {
+      this.handshake.endpoint = null;
+      this.handshake.token = null;
+      this.handshake.sawNullEndpoint = true;
+      this.logger.warn('Stream server reallocated, waiting for a replacement endpoint', {
+        guildId: this.guildId,
+        channelId: this.channelId,
+      });
+      return;
+    }
+
     this.handshake.endpoint = payload.d.endpoint;
     this.handshake.token = payload.d.token;
     this.handshake.deletedReason = null;
@@ -285,6 +297,7 @@ export class StreamJoinCoordinator {
             : 'join_timeout_missing_stream_create',
       sawStreamCreate: this.handshake.sawStreamCreate,
       sawStreamServer: this.handshake.sawStreamServer,
+      sawNullEndpoint: this.handshake.sawNullEndpoint,
       ...(this.handshake.deletedReason ? { deletedReason: this.handshake.deletedReason } : {}),
     };
 

@@ -59,5 +59,6 @@ export type StreamHandshakeState = {
   token: string | null;
   sawStreamCreate: boolean;
   sawStreamServer: boolean;
+  sawNullEndpoint: boolean;
   deletedReason: string | null;
 };

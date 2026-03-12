@@ -97,4 +97,49 @@ describe('StreamJoinCoordinator', () => {
       }),
     });
   });
+
+  test('waits for a replacement stream endpoint after a null server update', async () => {
+    const session = createSession();
+    const connection = createConnection();
+    const coordinator = new StreamJoinCoordinator(
+      session as never,
+      connection as never,
+      new Logger('test', 'debug'),
+      'guild-1',
+      'channel-1',
+      'user-1',
+      () => 'voice-session',
+      { handshakeTimeoutMs: 25 }
+    );
+
+    const promise = coordinator.connectInitial();
+    await Promise.resolve();
+
+    coordinator.handleStreamCreate({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '777',
+      },
+    });
+    coordinator.handleStreamServerUpdate({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: null,
+        token: 'stale-token',
+      },
+    });
+    coordinator.handleStreamServerUpdate({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream.discord.test',
+        token: 'stream-token',
+      },
+    });
+
+    await expect(promise).resolves.toEqual({ mediaConnection: 'stream' });
+    expect(connection.setTokens).toHaveBeenCalledWith('stream.discord.test', 'stream-token');
+  });
 });
