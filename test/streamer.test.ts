@@ -5,6 +5,7 @@ import { Logger } from '../src/logging.js';
 class MockConnection extends EventEmitter {
   public readonly setReconnectAttempt = vi.fn();
   public readonly prepareForReconnect = vi.fn();
+  public readonly prepareForServerReallocation = vi.fn();
   public waitUntilReady = vi.fn();
   public readonly setSession = vi.fn((sessionId: string) => {
     this.voiceSessionId = sessionId;
@@ -441,6 +442,51 @@ describe('Streamer', () => {
       },
     });
 
+    expect(nextStreamConnection.prepareForServerReallocation).toHaveBeenCalledTimes(1);
     expect(nextStreamConnection.setTokens).not.toHaveBeenCalled();
+  });
+
+  test('disconnects from the active voice server when Discord clears the endpoint', async () => {
+    const session = createSession();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        user_id: 'user-1',
+        session_id: 'voice-session',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    nextVoiceConnection.setTokens.mockClear();
+
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: null,
+        token: 'stale-token',
+      },
+    });
+
+    expect(nextVoiceConnection.prepareForServerReallocation).toHaveBeenCalledTimes(1);
+    expect(nextVoiceConnection.setTokens).not.toHaveBeenCalled();
   });
 });

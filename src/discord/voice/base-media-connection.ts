@@ -217,6 +217,35 @@ export abstract class BaseMediaConnection extends EventEmitter {
     this.reconnectState = state;
   }
 
+  public prepareForServerReallocation(): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.ready = false;
+    this.currentWebRtcParameters = null;
+    this.connectionState.started = false;
+    this.connectionState.resuming = false;
+    this.connectionState.hasToken = false;
+    this.sequenceNumber = -1;
+    this.voiceServer = null;
+    this.voiceToken = null;
+    this.lastCloseCode = undefined;
+    this.lastCloseReason = undefined;
+    this.heartbeatIntervalMs = undefined;
+    this.lastHeartbeatSentAt = undefined;
+    this.lastHeartbeatAckAt = undefined;
+    this.missedHeartbeatAcks = 0;
+    this.reconnectState = 'refreshing';
+    this.clearHeartbeatTimer();
+    this.resetDaveSession();
+    this.webRtcWrapper.close();
+
+    const socket = this.webSocket;
+    this.webSocket = null;
+    socket?.close();
+  }
+
   public prepareForReconnect(attempt: number, options?: ReconnectPreparationOptions): void {
     const preservedSessionId = options?.preserveSession ? this.sessionId : null;
     const preservedVoiceServer = options?.preserveTokens ? this.voiceServer : null;

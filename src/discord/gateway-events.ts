@@ -16,7 +16,7 @@ export type GatewayVoiceStateUpdate = GatewayEventGeneric<
 export type GatewayVoiceServerUpdate = GatewayEventGeneric<
   'VOICE_SERVER_UPDATE',
   {
-    guild_id: string;
+    guild_id?: string | null;
     channel_id?: string | null;
     endpoint: string | null;
     token: string;
@@ -45,6 +45,7 @@ export type GatewayStreamDelete = GatewayEventGeneric<
   {
     stream_key: string;
     reason?: string;
+    unavailable?: boolean;
   }
 >;
 

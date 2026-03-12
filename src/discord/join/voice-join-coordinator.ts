@@ -235,6 +235,9 @@ function backoffDelay(attempt: number): number {
   return 250 * attempt + Math.floor(Math.random() * 150);
 }
 
-function matchesGuild(receivedGuildId: string, expectedGuildId: string): boolean {
+function matchesGuild(
+  receivedGuildId: string | null | undefined,
+  expectedGuildId: string
+): boolean {
   return receivedGuildId === expectedGuildId;
 }

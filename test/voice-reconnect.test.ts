@@ -184,7 +184,11 @@ describe('classifyVoiceCloseCode', () => {
   test('classifies fatal close codes', () => {
     expect(classifyVoiceCloseCode(4014)).toBe('fatal');
     expect(classifyVoiceCloseCode(4022)).toBe('fatal');
-    expect(classifyVoiceCloseCode(4006)).toBe('fatal');
+  });
+
+  test('classifies reconnect-from-scratch close codes', () => {
+    expect(classifyVoiceCloseCode(4006)).toBe('refresh');
+    expect(classifyVoiceCloseCode(4009)).toBe('refresh');
   });
 });
 
@@ -241,6 +245,26 @@ describe('BaseMediaConnection reconnect handling', () => {
     );
   });
 
+  test('requests a full refresh after a 4006 close', () => {
+    const { connection, streamer } = createConnection();
+    connection.setSession('session-1');
+    connection.setTokens('voice.discord.test', 'token-1');
+
+    const firstSocket = FakeWebSocket.instances[0];
+    firstSocket?.open();
+    firstSocket?.close(4006, 'session_invalid');
+
+    expect(streamer.handleConnectionRecoveryRequested).toHaveBeenCalledWith(
+      connection,
+      expect.objectContaining({
+        trigger: 'socket_close',
+        state: 'refreshing',
+        closeCode: 4006,
+      })
+    );
+    expect(streamer.handleConnectionFatal).not.toHaveBeenCalled();
+  });
+
   test('responds immediately when the voice gateway requests a heartbeat', () => {
     const { connection } = createConnection();
     connection.setSession('session-1');
@@ -281,7 +305,7 @@ describe('BaseMediaConnection reconnect handling', () => {
 
     const firstSocket = FakeWebSocket.instances[0];
     firstSocket?.open();
-    firstSocket?.close(4006, 'invalid_session');
+    firstSocket?.close(4016, 'unknown_encryption_mode');
 
     expect(streamer.handleConnectionFatal).toHaveBeenCalledWith(
       connection,

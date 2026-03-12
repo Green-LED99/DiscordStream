@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { AppError, ExitCode } from '../errors.js';
@@ -51,13 +52,14 @@ type GatewayChannelSnapshot = {
   type: number;
   name: string | null;
   userLimit: number | null;
-  maxVideoChannelUsers: number | null;
   permissionOverwrites: GatewayChannelOverwrite[];
 };
 
 type GatewayGuildSnapshotInternal = {
   id: string;
   ownerId: string | null;
+  maxVideoChannelUsers: number | null;
+  maxStageVideoChannelUsers: number | null;
   roles: Map<string, GatewayGuildRole>;
   channels: Map<string, GatewayChannelSnapshot>;
   selfRoleIds: string[] | null;
@@ -67,6 +69,8 @@ type GatewayGuildSnapshotInternal = {
 type GatewayDispatchGuild = {
   id: string;
   owner_id?: string;
+  max_video_channel_users?: number;
+  max_stage_video_channel_users?: number;
   roles?: Array<{ id?: string; permissions?: string }>;
   channels?: Array<{
     id?: string;
@@ -74,7 +78,6 @@ type GatewayDispatchGuild = {
     type?: number;
     name?: string;
     user_limit?: number;
-    max_video_channel_users?: number;
     permission_overwrites?: Array<{
       id?: string;
       type?: number | string;
@@ -148,6 +151,8 @@ class UserGatewaySessionImpl implements UserGatewaySession {
   private reconnecting = false;
   private destroyed = false;
   private token: string | null = null;
+  private readonly clientLaunchId = randomUUID();
+  private clientHeartbeatSessionId = randomUUID();
 
   public constructor(private readonly logger: Logger) {}
 
@@ -261,7 +266,10 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       occupancy: {
         connectedUsers,
         userLimit: channel.userLimit,
-        maxVideoChannelUsers: channel.maxVideoChannelUsers,
+        maxVideoChannelUsers:
+          channel.type === STAGE_CHANNEL_TYPE
+            ? guild.maxStageVideoChannelUsers
+            : guild.maxVideoChannelUsers,
       },
     };
   }
@@ -521,6 +529,8 @@ class UserGatewaySessionImpl implements UserGatewaySession {
         browser: 'Discord Client',
         device: 'Discord Client',
         system_locale: locale,
+        client_launch_id: this.clientLaunchId,
+        client_heartbeat_session_id: this.clientHeartbeatSessionId,
       },
       compress: false,
       client_state: {
@@ -532,7 +542,7 @@ class UserGatewaySessionImpl implements UserGatewaySession {
         api_code_version: 0,
       },
       presence: {
-        status: 'online',
+        status: 'unknown',
         since: 0,
         afk: false,
         activities: [],
@@ -688,6 +698,8 @@ class UserGatewaySessionImpl implements UserGatewaySession {
     const snapshot = this.guilds.get(guild.id) ?? {
       id: guild.id,
       ownerId: guild.owner_id ?? null,
+      maxVideoChannelUsers: null,
+      maxStageVideoChannelUsers: null,
       roles: new Map<string, GatewayGuildRole>(),
       channels: new Map<string, GatewayChannelSnapshot>(),
       selfRoleIds: null,
@@ -695,6 +707,9 @@ class UserGatewaySessionImpl implements UserGatewaySession {
     };
 
     snapshot.ownerId = guild.owner_id ?? snapshot.ownerId;
+    snapshot.maxVideoChannelUsers = guild.max_video_channel_users ?? snapshot.maxVideoChannelUsers;
+    snapshot.maxStageVideoChannelUsers =
+      guild.max_stage_video_channel_users ?? snapshot.maxStageVideoChannelUsers;
 
     for (const role of guild.roles ?? []) {
       if (!role.id) {
@@ -750,6 +765,8 @@ class UserGatewaySessionImpl implements UserGatewaySession {
     const guild = this.guilds.get(guildId) ?? {
       id: guildId,
       ownerId: null,
+      maxVideoChannelUsers: null,
+      maxStageVideoChannelUsers: null,
       roles: new Map<string, GatewayGuildRole>(),
       channels: new Map<string, GatewayChannelSnapshot>(),
       selfRoleIds: null,
@@ -786,6 +803,8 @@ class UserGatewaySessionImpl implements UserGatewaySession {
     const guild = this.guilds.get(guildId) ?? {
       id: guildId,
       ownerId: null,
+      maxVideoChannelUsers: null,
+      maxStageVideoChannelUsers: null,
       roles: new Map<string, GatewayGuildRole>(),
       channels: new Map<string, GatewayChannelSnapshot>(),
       selfRoleIds: null,
@@ -878,7 +897,6 @@ function parseChannelSnapshot(data: unknown, guildId: string): GatewayChannelSna
     type,
     name: getNullableStringField(data, 'name'),
     userLimit: getNullableNumberField(data, 'user_limit'),
-    maxVideoChannelUsers: getNullableNumberField(data, 'max_video_channel_users'),
     permissionOverwrites: rawOverwrites
       .map((overwrite) => parsePermissionOverwrite(overwrite))
       .filter((overwrite): overwrite is GatewayChannelOverwrite => overwrite !== null),

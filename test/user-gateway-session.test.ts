@@ -102,11 +102,28 @@ describe('UserGatewaySession', () => {
     const identifyMessage = socket?.sent.find((message) => String(message).includes('"op":2'));
     const identifyPayload = JSON.parse(String(identifyMessage)) as {
       op: number;
-      d: { capabilities: number; properties: { browser: string } };
+      d: {
+        capabilities: number;
+        properties: {
+          browser: string;
+          client_launch_id: string;
+          client_heartbeat_session_id: string;
+        };
+        presence: {
+          status: string;
+        };
+      };
     };
     expect(identifyPayload.op).toBe(2);
     expect(identifyPayload.d.capabilities).toBe(16_381);
     expect(identifyPayload.d.properties.browser).toBe('Discord Client');
+    expect(identifyPayload.d.properties.client_launch_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    expect(identifyPayload.d.properties.client_heartbeat_session_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    expect(identifyPayload.d.presence.status).toBe('unknown');
 
     socket?.dispatch({
       op: 0,
@@ -479,6 +496,68 @@ describe('UserGatewaySession', () => {
     await expect(session.preflightVoiceJoin('guild-1', 'channel-1')).rejects.toBeInstanceOf(
       AppError
     );
+    session.destroy();
+  });
+
+  test('reports guild video limits from guild metadata during preflight', async () => {
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+    socket?.dispatch({
+      op: 0,
+      t: 'READY',
+      s: 1,
+      d: {
+        user: { id: 'user-1' },
+        session_id: 'gateway-session',
+        resume_gateway_url: 'wss://resume.discord.test',
+        guilds: [
+          {
+            id: 'guild-1',
+            owner_id: 'owner-1',
+            max_video_channel_users: 25,
+            roles: [
+              { id: 'guild-1', permissions: '1049088' },
+              { id: 'role-1', permissions: '0' },
+            ],
+            channels: [
+              {
+                id: 'channel-1',
+                guild_id: 'guild-1',
+                type: 2,
+                user_limit: 99,
+                permission_overwrites: [],
+              },
+            ],
+            members: [
+              {
+                user: { id: 'user-1' },
+                roles: ['role-1'],
+              },
+            ],
+            voice_states: [],
+          },
+        ],
+      },
+    });
+    await loginPromise;
+
+    await expect(session.preflightVoiceJoin('guild-1', 'channel-1')).resolves.toMatchObject({
+      occupancy: expect.objectContaining({
+        maxVideoChannelUsers: 25,
+      }),
+    });
     session.destroy();
   });
 });

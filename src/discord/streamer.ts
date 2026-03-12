@@ -326,6 +326,7 @@ export class Streamer {
         guildId: this.desiredVoice.guildId,
         channelId: this.desiredVoice.channelId,
       });
+      this.voiceConnection.prepareForServerReallocation();
       return;
     }
 
@@ -386,6 +387,7 @@ export class Streamer {
         guildId: this.desiredStream.guildId,
         channelId: this.desiredStream.channelId,
       });
+      this.streamConnection.prepareForServerReallocation();
       return;
     }
 
