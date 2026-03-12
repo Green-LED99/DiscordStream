@@ -181,11 +181,9 @@ describe('classifyVoiceCloseCode', () => {
     expect(classifyVoiceCloseCode(4015)).toBe('resume');
   });
 
-  test('classifies forced refresh codes', () => {
-    expect(classifyVoiceCloseCode(4014)).toBe('refresh');
-  });
-
   test('classifies fatal close codes', () => {
+    expect(classifyVoiceCloseCode(4014)).toBe('fatal');
+    expect(classifyVoiceCloseCode(4022)).toBe('fatal');
     expect(classifyVoiceCloseCode(4006)).toBe('fatal');
   });
 });
@@ -222,7 +220,7 @@ describe('BaseMediaConnection reconnect handling', () => {
     expect(streamer.handleConnectionRecoveryRequested).not.toHaveBeenCalled();
   });
 
-  test('requests a refresh after a 4014 close', () => {
+  test('treats a 4014 close as fatal', () => {
     const { connection, streamer } = createConnection();
     connection.setSession('session-1');
     connection.setTokens('voice.discord.test', 'token-1');
@@ -231,12 +229,14 @@ describe('BaseMediaConnection reconnect handling', () => {
     firstSocket?.open();
     firstSocket?.close(4014, 'force_disconnect');
 
-    expect(streamer.handleConnectionRecoveryRequested).toHaveBeenCalledWith(
+    expect(streamer.handleConnectionRecoveryRequested).not.toHaveBeenCalled();
+    expect(streamer.handleConnectionFatal).toHaveBeenCalledWith(
       connection,
       expect.objectContaining({
-        connectionKind: 'voice',
-        trigger: 'socket_close',
-        closeCode: 4014,
+        details: expect.objectContaining({
+          reason: 'voice_ws_fatal_close',
+          closeCode: 4014,
+        }),
       })
     );
   });

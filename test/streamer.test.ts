@@ -330,4 +330,117 @@ describe('Streamer', () => {
       self_video: false,
     });
   });
+
+  test('treats a post-ready voice channel removal as fatal instead of reconnecting', async () => {
+    const session = createSession();
+    const fatalListener = vi.fn();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    streamer.onFatal(fatalListener);
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        user_id: 'user-1',
+        session_id: 'voice-session',
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        user_id: 'user-1',
+        session_id: 'voice-session-2',
+        guild_id: 'guild-1',
+        channel_id: null,
+      },
+    });
+
+    expect(nextVoiceConnection.prepareForReconnect).toHaveBeenCalledTimes(1);
+    expect(fatalListener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          reason: 'voice_state_terminal_disconnect',
+          observedChannelId: null,
+        }),
+      })
+    );
+  });
+
+  test('ignores cleared stream endpoints until Discord sends a replacement', async () => {
+    const session = createSession();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        user_id: 'user-1',
+        session_id: 'voice-session',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    const streamPromise = streamer.createStream();
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '777',
+      },
+    });
+    session.emitRaw({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream.discord.test',
+        token: 'stream-token',
+      },
+    });
+    await streamPromise;
+
+    nextStreamConnection.setTokens.mockClear();
+
+    session.emitRaw({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: null,
+        token: 'stale-token',
+      },
+    });
+
+    expect(nextStreamConnection.setTokens).not.toHaveBeenCalled();
+  });
 });

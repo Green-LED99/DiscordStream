@@ -288,13 +288,19 @@ export class Streamer {
       return;
     }
 
-    void this.handleConnectionRecoveryRequested(this.voiceConnection, {
-      connectionKind: 'voice',
-      attempt: this.runtimeRecoveryCount,
-      trigger: 'voice_state_update',
-      state: 'refreshing',
-      closeReason: `voice_state:${payload.d.channel_id ?? 'null'}`,
-    });
+    this.handleConnectionFatal(
+      this.voiceConnection,
+      new AppError(
+        'Discord moved or disconnected the companion user from the voice channel.',
+        ExitCode.Gateway,
+        {
+          reason: 'voice_state_terminal_disconnect',
+          guildId: this.desiredVoice.guildId,
+          channelId: this.desiredVoice.channelId,
+          observedChannelId: payload.d.channel_id ?? null,
+        }
+      )
+    );
   }
 
   private handleVoiceServerUpdate(payload: GatewayVoiceServerUpdate): void {
@@ -372,6 +378,14 @@ export class Streamer {
 
     if (!this.streamConnection.isReady && this.streamJoinCoordinator) {
       this.streamJoinCoordinator.handleStreamServerUpdate(payload);
+      return;
+    }
+
+    if (!payload.d.endpoint) {
+      this.logger.warn('Stream server endpoint was cleared; waiting for recovery', {
+        guildId: this.desiredStream.guildId,
+        channelId: this.desiredStream.channelId,
+      });
       return;
     }
 

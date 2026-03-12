@@ -17,8 +17,8 @@ export function classifyVoiceCloseCode(code: number): CloseClassification {
     return 'resume';
   }
 
-  if (code === 4014) {
-    return 'refresh';
+  if (code === 4014 || code === 4022) {
+    return 'fatal';
   }
 
   return 'fatal';
