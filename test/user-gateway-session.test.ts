@@ -76,6 +76,7 @@ describe('UserGatewaySession', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -291,6 +292,59 @@ describe('UserGatewaySession', () => {
     session.destroy();
   });
 
+  test('re-identifies on the existing websocket after a non-resumable invalid session', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+    socket?.dispatch({
+      op: 0,
+      t: 'READY',
+      s: 5,
+      d: {
+        user: { id: 'user-1' },
+        session_id: 'gateway-session',
+        resume_gateway_url: 'wss://resume.discord.test',
+      },
+    });
+    await loginPromise;
+
+    const identifyCountBefore = socket?.sent.filter((message) =>
+      String(message).includes('"op":2')
+    ).length;
+
+    socket?.dispatch({
+      op: 9,
+      d: false,
+    });
+
+    await vi.waitFor(
+      () => {
+        const identifyCountAfter = socket?.sent.filter((message) =>
+          String(message).includes('"op":2')
+        ).length;
+        expect(identifyCountAfter).toBe((identifyCountBefore ?? 0) + 1);
+        expect(FakeWebSocket.instances).toHaveLength(1);
+      },
+      {
+        timeout: 2_500,
+      }
+    );
+
+    session.destroy();
+  });
+
   test('treats too many gateway sessions as fatal', async () => {
     const session = createUserGatewaySession(new Logger('test', 'debug'));
     const loginPromise = session.login('user-token');
@@ -348,6 +402,64 @@ describe('UserGatewaySession', () => {
                 id: 'channel-1',
                 guild_id: 'guild-1',
                 type: 13,
+                permission_overwrites: [],
+              },
+            ],
+            members: [
+              {
+                user: { id: 'user-1' },
+                roles: ['role-1'],
+              },
+            ],
+            voice_states: [],
+          },
+        ],
+      },
+    });
+    await loginPromise;
+
+    await expect(session.preflightVoiceJoin('guild-1', 'channel-1')).rejects.toBeInstanceOf(
+      AppError
+    );
+    session.destroy();
+  });
+
+  test('rejects guild media channels during preflight when metadata is available', async () => {
+    const session = createUserGatewaySession(new Logger('test', 'debug'));
+    const loginPromise = session.login('user-token');
+    await vi.waitFor(() => {
+      expect(FakeWebSocket.instances[0]).toBeDefined();
+    });
+    const socket = FakeWebSocket.instances[0];
+
+    socket?.open();
+    socket?.dispatch({
+      op: 10,
+      d: {
+        heartbeat_interval: 45_000,
+      },
+    });
+    socket?.dispatch({
+      op: 0,
+      t: 'READY',
+      s: 1,
+      d: {
+        user: { id: 'user-1' },
+        session_id: 'gateway-session',
+        resume_gateway_url: 'wss://resume.discord.test',
+        guilds: [
+          {
+            id: 'guild-1',
+            owner_id: 'owner-1',
+            roles: [
+              { id: 'guild-1', permissions: '1049088' },
+              { id: 'role-1', permissions: '0' },
+            ],
+            channels: [
+              {
+                id: 'channel-1',
+                guild_id: 'guild-1',
+                type: 16,
                 permission_overwrites: [],
               },
             ],

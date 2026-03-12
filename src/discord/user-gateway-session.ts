@@ -14,7 +14,7 @@ const STREAM_PERMISSION = 512n;
 const ADMINISTRATOR_PERMISSION = 8n;
 const ALL_PERMISSIONS = (1n << 53n) - 1n;
 const STAGE_CHANNEL_TYPE = 13;
-const SUPPORTED_VOICE_CHANNEL_TYPES = new Set([2, 16]);
+const SUPPORTED_VOICE_CHANNEL_TYPES = new Set([2]);
 
 type RawGatewayListener = (event: GatewayEvent) => void;
 type GatewayCloseClassification = 'resume' | 'identify' | 'fatal' | 'auth';
@@ -561,9 +561,24 @@ class UserGatewaySessionImpl implements UserGatewaySession {
       this.gatewaySessionId = null;
       this.seq = null;
       this.resumeGatewayUrl = null;
+      this.currentUserRef = null;
     }
 
-    await sleep(1_000);
+    await sleep(1_000 + Math.floor(Math.random() * 4_000));
+
+    if (this.destroyed) {
+      return;
+    }
+
+    if (this.webSocket?.readyState === WebSocket.OPEN) {
+      if (resumable && this.gatewaySessionId && this.seq !== null) {
+        this.sendResume();
+      } else {
+        this.sendIdentify();
+      }
+      return;
+    }
+
     await this.reconnect(resumable, 'invalid_session');
   }
 
