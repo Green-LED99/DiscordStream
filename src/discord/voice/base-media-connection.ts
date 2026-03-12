@@ -653,7 +653,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
         'Voice heartbeat timed out',
         this.logContext({ trigger: 'heartbeat_timeout' })
       );
-      this.requestRecovery('heartbeat_timeout');
+      this.requestResume('heartbeat_timeout');
       return;
     }
 
@@ -726,6 +726,21 @@ export abstract class BaseMediaConnection extends EventEmitter {
       ...(this.lastCloseReason ? { closeReason: this.lastCloseReason } : {}),
     };
     this.streamer.handleConnectionRecoveryRequested(this, diagnostics);
+  }
+
+  private requestResume(trigger: RecoveryTrigger): void {
+    if (this.closed || this.reconnectState === 'resuming' || this.reconnectState === 'failed') {
+      return;
+    }
+
+    this.ready = false;
+    this.reconnectState = 'resuming';
+    this.connectionState.resuming = true;
+    this.clearHeartbeatTimer();
+
+    const socket = this.webSocket;
+    this.webSocket = null;
+    socket?.close(3990, trigger);
   }
 
   private emitFatalDisconnect(error: AppError): void {

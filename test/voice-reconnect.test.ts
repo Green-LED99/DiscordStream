@@ -258,7 +258,7 @@ describe('BaseMediaConnection reconnect handling', () => {
     );
   });
 
-  test('requests recovery after two missed heartbeat acknowledgements', () => {
+  test('resumes after two missed heartbeat acknowledgements', () => {
     vi.useFakeTimers();
 
     const { connection, streamer } = createConnection();
@@ -272,13 +272,17 @@ describe('BaseMediaConnection reconnect handling', () => {
 
     vi.advanceTimersByTime(300);
 
-    expect(streamer.handleConnectionRecoveryRequested).toHaveBeenCalledWith(
-      connection,
-      expect.objectContaining({
-        connectionKind: 'voice',
-        trigger: 'heartbeat_timeout',
-      })
-    );
+    const resumedSocket = FakeWebSocket.instances[1];
+    resumedSocket?.open();
+
+    const payload = JSON.parse(String(resumedSocket?.sent[0])) as {
+      op: number;
+      d: { session_id: string };
+    };
+
+    expect(streamer.handleConnectionRecoveryRequested).not.toHaveBeenCalled();
+    expect(payload.op).toBe(7);
+    expect(payload.d.session_id).toBe('session-1');
   });
 
   test('waitUntilReady rejects on fatal disconnect', async () => {
