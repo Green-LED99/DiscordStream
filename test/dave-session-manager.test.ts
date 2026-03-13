@@ -102,6 +102,7 @@ function createFakeDaveModule(): DaveModule {
 describe('DaveSessionManager', () => {
   test('sends an MLS key package when DAVE is negotiated', () => {
     const dave = createFakeDaveModule();
+    const transientKeys = new dave.TransientKeys();
     const sendJson = vi.fn();
     const sendBinary = vi.fn();
     const onSelfKeyRatchetUpdated = vi.fn();
@@ -109,6 +110,7 @@ describe('DaveSessionManager', () => {
       dave,
       '1234',
       '5678',
+      transientKeys,
       new Logger('test', 'debug'),
       sendJson,
       sendBinary,
@@ -122,11 +124,13 @@ describe('DaveSessionManager', () => {
 
   test('signals transition readiness for non-init transitions', () => {
     const dave = createFakeDaveModule();
+    const transientKeys = new dave.TransientKeys();
     const sendJson = vi.fn();
     const manager = new DaveSessionManager(
       dave,
       '1234',
       '5678',
+      transientKeys,
       new Logger('test', 'debug'),
       sendJson,
       vi.fn(),
@@ -140,11 +144,13 @@ describe('DaveSessionManager', () => {
 
   test('moves the local encryptor into passthrough when protocol zero executes', () => {
     const dave = createFakeDaveModule();
+    const transientKeys = new dave.TransientKeys();
     const onSelfKeyRatchetUpdated = vi.fn();
     const manager = new DaveSessionManager(
       dave,
       '1234',
       '5678',
+      transientKeys,
       new Logger('test', 'debug'),
       vi.fn(),
       vi.fn(),
@@ -155,5 +161,27 @@ describe('DaveSessionManager', () => {
     manager.onExecuteTransition(44);
 
     expect(onSelfKeyRatchetUpdated).toHaveBeenCalledWith(null);
+  });
+
+  test('uses the provided transient keys instead of creating a new key store', () => {
+    const dave = createFakeDaveModule();
+    const transientKeys = {
+      GetTransientPrivateKey: vi.fn(() => ({})),
+      Clear: vi.fn(),
+    };
+    const manager = new DaveSessionManager(
+      dave,
+      '1234',
+      '5678',
+      transientKeys,
+      new Logger('test', 'debug'),
+      vi.fn(),
+      vi.fn(),
+      vi.fn()
+    );
+
+    manager.onSelectProtocolAck(1);
+
+    expect(transientKeys.GetTransientPrivateKey).toHaveBeenCalledWith(1);
   });
 });

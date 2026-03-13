@@ -32,10 +32,21 @@ let nextVoiceConnection: MockConnection;
 let nextStreamConnection: MockConnection;
 let voiceWaitUntilReadyMock: ReturnType<typeof vi.fn>;
 let streamWaitUntilReadyMock: ReturnType<typeof vi.fn>;
+let lastVoiceTransientKeys: unknown;
+let lastStreamTransientKeys: unknown;
 
 vi.mock('../src/discord/voice/voice-connection.js', () => ({
   VoiceConnection: vi.fn(
-    (_streamer, _dave, _logger, guildId: string | null, _userId: string, channelId: string) => {
+    (
+      _streamer,
+      _dave,
+      _logger,
+      guildId: string | null,
+      _userId: string,
+      channelId: string,
+      transientKeys: unknown
+    ) => {
+      lastVoiceTransientKeys = transientKeys;
       nextVoiceConnection = new MockConnection('voice', guildId, channelId);
       nextVoiceConnection.waitUntilReady = voiceWaitUntilReadyMock;
       return nextVoiceConnection;
@@ -45,7 +56,16 @@ vi.mock('../src/discord/voice/voice-connection.js', () => ({
 
 vi.mock('../src/discord/voice/stream-connection.js', () => ({
   StreamConnection: vi.fn(
-    (_streamer, _dave, _logger, guildId: string | null, _userId: string, channelId: string) => {
+    (
+      _streamer,
+      _dave,
+      _logger,
+      guildId: string | null,
+      _userId: string,
+      channelId: string,
+      transientKeys: unknown
+    ) => {
+      lastStreamTransientKeys = transientKeys;
       nextStreamConnection = new MockConnection('stream', guildId, channelId);
       nextStreamConnection.waitUntilReady = streamWaitUntilReadyMock;
       return nextStreamConnection;
@@ -94,9 +114,21 @@ function createSession() {
   };
 }
 
+function createDaveModule() {
+  class FakeTransientKeys {
+    public Clear(): void {}
+  }
+
+  return {
+    TransientKeys: FakeTransientKeys,
+  };
+}
+
 describe('Streamer', () => {
   beforeEach(() => {
     vi.resetModules();
+    lastVoiceTransientKeys = undefined;
+    lastStreamTransientKeys = undefined;
     voiceWaitUntilReadyMock = vi.fn(async () => {
       nextVoiceConnection.isReady = true;
       return { mediaConnection: nextVoiceConnection };
@@ -111,7 +143,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -149,7 +185,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -252,7 +292,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -297,7 +341,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -339,7 +387,11 @@ describe('Streamer', () => {
     const fatalListener = vi.fn();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
     streamer.onFatal(fatalListener);
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
@@ -390,7 +442,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -453,7 +509,11 @@ describe('Streamer', () => {
     const session = createSession();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
     await Promise.resolve();
@@ -498,7 +558,11 @@ describe('Streamer', () => {
     const fatalListener = vi.fn();
 
     const { Streamer } = await import('../src/discord/streamer.js');
-    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
     streamer.onFatal(fatalListener);
 
     const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
@@ -587,5 +651,61 @@ describe('Streamer', () => {
       paused: false,
     });
     expect(fatalListener).not.toHaveBeenCalled();
+  });
+
+  test('shares one transient key store across the voice and stream connections', async () => {
+    const session = createSession();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(
+      session as never,
+      createDaveModule() as never,
+      new Logger('test', 'debug')
+    );
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        user_id: 'user-1',
+        session_id: 'voice-session',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    const streamPromise = streamer.createStream();
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '777',
+        rtc_channel_id: '999',
+      },
+    });
+    session.emitRaw({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream.discord.test',
+        token: 'stream-token',
+      },
+    });
+    await streamPromise;
+
+    expect(lastVoiceTransientKeys).toBeDefined();
+    expect(lastVoiceTransientKeys).toBe(lastStreamTransientKeys);
   });
 });

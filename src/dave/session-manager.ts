@@ -10,7 +10,6 @@ type SendBinaryOpcode = (opcode: number, payload: Uint8Array) => void;
 type OnSelfKeyRatchetUpdated = (keyRatchet: DaveKeyRatchet | null) => void;
 
 export class DaveSessionManager {
-  private readonly transientKeys: DaveTransientKeys;
   private readonly session;
   private readonly recognizedUserIds = new Set<string>();
   private readonly pendingTransitions = new Map<number, number>();
@@ -20,12 +19,12 @@ export class DaveSessionManager {
     private readonly dave: DaveModule,
     private readonly selfUserId: string,
     private readonly groupId: string,
+    private readonly transientKeys: DaveTransientKeys,
     private readonly logger: Logger,
     private readonly sendJsonOpcode: SendJsonOpcode,
     private readonly sendBinaryOpcode: SendBinaryOpcode,
     private readonly onSelfKeyRatchetUpdated: OnSelfKeyRatchetUpdated
   ) {
-    this.transientKeys = new dave.TransientKeys();
     this.session = new dave.Session('', '', (source, reason) => {
       this.logger.error('MLS failure', { source, reason });
     });

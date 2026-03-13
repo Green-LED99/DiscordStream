@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { DaveMediaEncryptor } from '../../dave/media-encryptor.js';
 import { DaveSessionManager } from '../../dave/session-manager.js';
-import type { DaveModule } from '../../dave/types.js';
+import type { DaveModule, DaveTransientKeys } from '../../dave/types.js';
 import { AppError, ExitCode } from '../../errors.js';
 import type { Logger } from '../../logging.js';
 import { codecPayloadType } from '../../transport/codec-payload-type.js';
@@ -93,7 +93,8 @@ export abstract class BaseMediaConnection extends EventEmitter {
     protected readonly logger: Logger,
     public readonly guildId: string | null,
     public readonly userId: string,
-    public readonly channelId: string
+    public readonly channelId: string,
+    private readonly transientKeys: DaveTransientKeys
   ) {
     super();
     this.daveEncryptor = new DaveMediaEncryptor(dave);
@@ -662,6 +663,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
       this.dave,
       this.userId,
       this.daveChannelId,
+      this.transientKeys,
       this.logger.child('dave'),
       (opcode, payload) => this.sendOpcode(opcode, payload),
       (opcode, payload) => this.sendBinaryOpcode(opcode as VoiceBinaryOpcode, payload),

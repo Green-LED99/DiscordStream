@@ -1,4 +1,4 @@
-import type { DaveModule } from '../dave/types.js';
+import type { DaveModule, DaveTransientKeys } from '../dave/types.js';
 import { AppError, ExitCode, toAppError } from '../errors.js';
 import type { Logger } from '../logging.js';
 import type { WebRtcConnectionWrapper } from '../transport/webrtc-connection.js';
@@ -40,6 +40,7 @@ export class Streamer {
   private readonly fatalListeners = new Set<FatalListener>();
   private runtimeRecoveryCount = 0;
   private recoveryPromise: Promise<void> | null = null;
+  private transientKeys: DaveTransientKeys | undefined;
 
   public constructor(
     private readonly session: UserGatewaySession,
@@ -55,6 +56,7 @@ export class Streamer {
 
   public destroy(): void {
     this.session.offRaw(this.rawListener);
+    this.clearTransientKeys();
   }
 
   public onFatal(listener: FatalListener): void {
@@ -73,6 +75,8 @@ export class Streamer {
 
     this.desiredVoice = { guildId, channelId };
     this.runtimeRecoveryCount = 0;
+    this.clearTransientKeys();
+    this.transientKeys = new this.dave.TransientKeys();
 
     const preflight = await this.session.preflightVoiceJoin(guildId, channelId);
     if (preflight.warnings.length > 0) {
@@ -95,7 +99,8 @@ export class Streamer {
       this.logger.child('voice'),
       guildId,
       currentUser.id,
-      channelId
+      channelId,
+      this.transientKeys
     );
     this.voiceConnection = voiceConnection;
     this.voiceJoinCoordinator = new VoiceJoinCoordinator(
@@ -131,7 +136,8 @@ export class Streamer {
       this.logger.child('stream'),
       guildId,
       currentUser.id,
-      channelId
+      channelId,
+      this.getTransientKeys()
     );
     this.streamConnection = streamConnection;
     this.streamJoinCoordinator = new StreamJoinCoordinator(
@@ -183,6 +189,7 @@ export class Streamer {
       self_deaf: false,
       self_video: false,
     });
+    this.clearTransientKeys();
   }
 
   public signalVideo(enabled: boolean): void {
@@ -510,5 +517,18 @@ export class Streamer {
 
   private isActiveConnection(connection: BaseMediaConnection): boolean {
     return connection === this.voiceConnection || connection === this.streamConnection;
+  }
+
+  private getTransientKeys(): DaveTransientKeys {
+    if (!this.transientKeys) {
+      this.transientKeys = new this.dave.TransientKeys();
+    }
+
+    return this.transientKeys;
+  }
+
+  private clearTransientKeys(): void {
+    this.transientKeys?.Clear();
+    this.transientKeys = undefined;
   }
 }

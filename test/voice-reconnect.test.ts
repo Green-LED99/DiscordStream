@@ -132,6 +132,8 @@ function createDaveModule(): DaveModule {
     public GetTransientPrivateKey(): number[] {
       return [];
     }
+
+    public Clear(): void {}
   }
 
   class FakeSession {
@@ -198,13 +200,15 @@ function createConnection(streamer = createStreamerMock()): {
   connection: TestConnection;
   streamer: ReturnType<typeof createStreamerMock>;
 } {
+  const dave = createDaveModule();
   const connection = new TestConnection(
     streamer,
-    createDaveModule(),
+    dave,
     new Logger('test', 'debug'),
     'guild-1',
     'user-1',
-    'channel-1'
+    'channel-1',
+    new dave.TransientKeys()
   );
 
   return { connection, streamer };
@@ -214,13 +218,15 @@ function createStreamConnection(streamer = createStreamerMock()): {
   connection: TestStreamConnection;
   streamer: ReturnType<typeof createStreamerMock>;
 } {
+  const dave = createDaveModule();
   const connection = new TestStreamConnection(
     streamer,
-    createDaveModule(),
+    dave,
     new Logger('test', 'debug'),
     'guild-1',
     'user-1',
-    'channel-1'
+    'channel-1',
+    new dave.TransientKeys()
   );
   connection.setStreamContext('rtc-server-1', 'rtc-channel-1');
 
