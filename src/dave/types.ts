@@ -79,7 +79,8 @@ export interface DaveDecryptorInstance {
 }
 
 export interface DaveModule {
-  HEAPU8: Uint8Array;
+  HEAPU8?: Uint8Array;
+  wasmMemory?: WebAssembly.Memory;
   _malloc(size: number): number;
   _free(pointer: number): void;
   MaxSupportedProtocolVersion(): number;

@@ -1,4 +1,5 @@
 import { AppError, ExitCode } from '../errors.js';
+import { getDaveHeapU8 } from './runtime-exports.js';
 import type { DaveKeyRatchet, DaveModule } from './types.js';
 
 export class DaveMediaEncryptor {
@@ -8,6 +9,7 @@ export class DaveMediaEncryptor {
 
   public constructor(private readonly dave: DaveModule) {
     this.encryptor = new dave.Encryptor();
+    getDaveHeapU8(dave);
   }
 
   public destroy(): void {
@@ -42,8 +44,9 @@ export class DaveMediaEncryptor {
   private encrypt(mediaType: number, ssrc: number, frame: Uint8Array): Buffer {
     const outputSize = this.encryptor.GetMaxCiphertextByteSize(mediaType, frame.byteLength);
     const framePointer = this.ensureFrameCapacity(outputSize);
+    const inputHeap = getDaveHeapU8(this.dave);
 
-    this.dave.HEAPU8.set(frame, framePointer);
+    inputHeap.set(frame, framePointer);
     const bytesWritten = this.encryptor.Encrypt(
       mediaType,
       ssrc,
@@ -59,8 +62,9 @@ export class DaveMediaEncryptor {
       });
     }
 
+    const outputHeap = getDaveHeapU8(this.dave);
     const output = Buffer.allocUnsafe(bytesWritten);
-    output.set(this.dave.HEAPU8.subarray(framePointer, framePointer + bytesWritten));
+    output.set(outputHeap.subarray(framePointer, framePointer + bytesWritten));
     return output;
   }
 

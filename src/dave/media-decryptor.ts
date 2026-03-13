@@ -1,4 +1,5 @@
 import { AppError, ExitCode } from '../errors.js';
+import { getDaveHeapU8 } from './runtime-exports.js';
 import type { DaveKeyRatchet, DaveModule } from './types.js';
 
 export class DaveMediaDecryptor {
@@ -6,6 +7,7 @@ export class DaveMediaDecryptor {
 
   public constructor(private readonly dave: DaveModule) {
     this.decryptor = new dave.Decryptor();
+    getDaveHeapU8(dave);
   }
 
   public transitionToKeyRatchet(keyRatchet: DaveKeyRatchet | null): void {
@@ -29,7 +31,8 @@ export class DaveMediaDecryptor {
     const framePointer = this.dave._malloc(outputSize);
 
     try {
-      this.dave.HEAPU8.set(frame, framePointer);
+      const inputHeap = getDaveHeapU8(this.dave);
+      inputHeap.set(frame, framePointer);
       const bytesWritten = this.decryptor.Decrypt(
         mediaType,
         framePointer,
@@ -43,7 +46,8 @@ export class DaveMediaDecryptor {
         });
       }
 
-      return Uint8Array.from(this.dave.HEAPU8.subarray(framePointer, framePointer + bytesWritten));
+      const outputHeap = getDaveHeapU8(this.dave);
+      return Uint8Array.from(outputHeap.subarray(framePointer, framePointer + bytesWritten));
     } finally {
       this.dave._free(framePointer);
     }

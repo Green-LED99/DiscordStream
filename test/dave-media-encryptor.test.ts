@@ -64,4 +64,13 @@ describe('DaveMediaEncryptor', () => {
     const encryptor = new DaveMediaEncryptor(createEncryptorModule(0));
     expect(() => encryptor.encryptAudio(Uint8Array.from([1, 2, 3]), 99)).toThrow(AppError);
   });
+
+  test('throws a DAVE error when the module does not expose HEAPU8', () => {
+    const moduleWithoutHeap = {
+      ...createEncryptorModule(3),
+      HEAPU8: undefined,
+    } as unknown as DaveModule;
+
+    expect(() => new DaveMediaEncryptor(moduleWithoutHeap)).toThrow(/did not expose HEAPU8/);
+  });
 });
