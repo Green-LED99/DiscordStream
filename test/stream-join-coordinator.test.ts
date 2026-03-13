@@ -50,6 +50,7 @@ describe('StreamJoinCoordinator', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     coordinator.handleStreamServerUpdate({
@@ -64,6 +65,7 @@ describe('StreamJoinCoordinator', () => {
     await expect(promise).resolves.toEqual({ mediaConnection: 'stream' });
     expect(connection.setStreamContext).toHaveBeenCalledWith(
       '777',
+      '999',
       'guild:guild-1:channel-1:user-1'
     );
     expect(connection.setSession).toHaveBeenCalledWith('voice-session');
@@ -135,6 +137,7 @@ describe('StreamJoinCoordinator', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     coordinator.handleStreamServerUpdate({
@@ -172,6 +175,7 @@ describe('StreamJoinCoordinator', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     coordinator.handleStreamServerUpdate({

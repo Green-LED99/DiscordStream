@@ -42,7 +42,7 @@ export type VoiceSelectProtocolAck = {
   video_codec: string;
   dave_protocol_version: number;
 } & {
-  media_session_id?: number;
+  media_session_id?: string;
   sdp?: string;
 };
 

@@ -26,6 +26,7 @@ export class StreamJoinCoordinator {
     state: 'idle',
     streamKey: null,
     rtcServerId: null,
+    rtcChannelId: null,
     endpoint: null,
     token: null,
     sawStreamCreate: false,
@@ -105,6 +106,7 @@ export class StreamJoinCoordinator {
     this.handshake.sawStreamCreate = true;
     this.handshake.streamKey = payload.d.stream_key;
     this.handshake.rtcServerId = payload.d.rtc_server_id;
+    this.handshake.rtcChannelId = payload.d.rtc_channel_id;
     this.handshake.deletedReason = null;
     this.handshake.state = this.handshake.endpoint
       ? 'connecting_stream_ws'
@@ -114,6 +116,7 @@ export class StreamJoinCoordinator {
       channelId: this.channelId,
       streamKey: payload.d.stream_key,
       rtcServerId: payload.d.rtc_server_id,
+      rtcChannelId: payload.d.rtc_channel_id,
     });
     this.maybeResolveAttempt();
   }
@@ -235,7 +238,11 @@ export class StreamJoinCoordinator {
 
     this.handshake.state = 'connecting_stream_ws';
     this.connection.prepareForReconnect(attempt);
-    this.connection.setStreamContext(this.handshake.rtcServerId!, this.handshake.streamKey!);
+    this.connection.setStreamContext(
+      this.handshake.rtcServerId!,
+      this.handshake.rtcChannelId!,
+      this.handshake.streamKey!
+    );
     this.connection.setSession(voiceSessionId);
     this.connection.setTokens(this.handshake.endpoint!, this.handshake.token!);
     return this.connection.waitUntilReady();
@@ -286,6 +293,7 @@ export class StreamJoinCoordinator {
     return Boolean(
       this.handshake.streamKey &&
         this.handshake.rtcServerId &&
+        this.handshake.rtcChannelId &&
         this.handshake.endpoint &&
         this.handshake.token
     );

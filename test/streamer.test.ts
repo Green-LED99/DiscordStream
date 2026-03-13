@@ -180,6 +180,7 @@ describe('Streamer', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     session.emitRaw({
@@ -226,6 +227,7 @@ describe('Streamer', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '888',
+        rtc_channel_id: '1000',
       },
     });
     session.emitRaw({
@@ -419,6 +421,7 @@ describe('Streamer', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     session.emitRaw({
@@ -527,6 +530,7 @@ describe('Streamer', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '777',
+        rtc_channel_id: '999',
       },
     });
     session.emitRaw({
@@ -557,6 +561,7 @@ describe('Streamer', () => {
       d: {
         stream_key: 'guild:guild-1:channel-1:user-1',
         rtc_server_id: '888',
+        rtc_channel_id: '1000',
       },
     });
     session.emitRaw({

@@ -57,6 +57,7 @@ export type StreamHandshakeState = {
   state: StreamJoinState;
   streamKey: string | null;
   rtcServerId: string | null;
+  rtcChannelId: string | null;
   endpoint: string | null;
   token: string | null;
   sawStreamCreate: boolean;

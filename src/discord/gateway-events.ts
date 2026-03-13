@@ -28,6 +28,7 @@ export type GatewayStreamCreate = GatewayEventGeneric<
   {
     stream_key: string;
     rtc_server_id: string;
+    rtc_channel_id: string;
   }
 >;
 

@@ -7,6 +7,7 @@ export class StreamConnection extends BaseMediaConnection {
   }
 
   private rtcServerId: string | null = null;
+  private rtcChannelId: string | null = null;
   private currentStreamKey: string | null = null;
 
   public override get serverId(): string | null {
@@ -14,15 +15,24 @@ export class StreamConnection extends BaseMediaConnection {
   }
 
   public override get daveChannelId(): string {
-    if (!this.rtcServerId) {
-      throw new Error('RTC server id has not been set yet.');
+    if (!this.rtcChannelId) {
+      throw new Error('RTC channel id has not been set yet.');
     }
 
-    return (BigInt(this.rtcServerId) - 1n).toString();
+    return this.rtcChannelId;
   }
 
-  public setStreamContext(rtcServerId: string, streamKey: string): void {
+  protected override get voiceGatewayChannelId(): string {
+    if (!this.rtcChannelId) {
+      throw new Error('RTC channel id has not been set yet.');
+    }
+
+    return this.rtcChannelId;
+  }
+
+  public setStreamContext(rtcServerId: string, rtcChannelId: string, streamKey: string): void {
     this.rtcServerId = rtcServerId;
+    this.rtcChannelId = rtcChannelId;
     this.currentStreamKey = streamKey;
   }
 

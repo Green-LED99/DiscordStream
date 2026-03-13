@@ -353,7 +353,11 @@ export class Streamer {
       return;
     }
 
-    this.streamConnection.setStreamContext(payload.d.rtc_server_id, payload.d.stream_key);
+    this.streamConnection.setStreamContext(
+      payload.d.rtc_server_id,
+      payload.d.rtc_channel_id,
+      payload.d.stream_key
+    );
     if (this.voiceConnection?.voiceSessionId) {
       this.streamConnection.setSession(this.voiceConnection.voiceSessionId);
     }

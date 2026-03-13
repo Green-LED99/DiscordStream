@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DaveModule } from '../src/dave/types.js';
 import type { Streamer } from '../src/discord/streamer.js';
 import { BaseMediaConnection } from '../src/discord/voice/base-media-connection.js';
+import type { VoiceSelectProtocolAck } from '../src/discord/voice-types.js';
 import { classifyVoiceCloseCode } from '../src/discord/voice/reconnect.js';
 import type { ConnectionKind } from '../src/discord/voice/reconnect.js';
 import { AppError, ExitCode } from '../src/errors.js';
@@ -75,6 +76,40 @@ class TestConnection extends BaseMediaConnection {
 
   public override get daveChannelId(): string {
     return this.channelId;
+  }
+}
+
+class TestStreamConnection extends BaseMediaConnection {
+  private rtcServerId: string | null = null;
+  private rtcChannelId: string | null = null;
+
+  public override get connectionKind(): ConnectionKind {
+    return 'stream';
+  }
+
+  public override get serverId(): string | null {
+    return this.rtcServerId;
+  }
+
+  public override get daveChannelId(): string {
+    if (!this.rtcChannelId) {
+      throw new Error('RTC channel id has not been set yet.');
+    }
+
+    return this.rtcChannelId;
+  }
+
+  protected override get voiceGatewayChannelId(): string {
+    if (!this.rtcChannelId) {
+      throw new Error('RTC channel id has not been set yet.');
+    }
+
+    return this.rtcChannelId;
+  }
+
+  public setStreamContext(rtcServerId: string, rtcChannelId: string): void {
+    this.rtcServerId = rtcServerId;
+    this.rtcChannelId = rtcChannelId;
   }
 }
 
@@ -175,6 +210,23 @@ function createConnection(streamer = createStreamerMock()): {
   return { connection, streamer };
 }
 
+function createStreamConnection(streamer = createStreamerMock()): {
+  connection: TestStreamConnection;
+  streamer: ReturnType<typeof createStreamerMock>;
+} {
+  const connection = new TestStreamConnection(
+    streamer,
+    createDaveModule(),
+    new Logger('test', 'debug'),
+    'guild-1',
+    'user-1',
+    'channel-1'
+  );
+  connection.setStreamContext('rtc-server-1', 'rtc-channel-1');
+
+  return { connection, streamer };
+}
+
 describe('classifyVoiceCloseCode', () => {
   test('classifies resume codes', () => {
     expect(classifyVoiceCloseCode(1000)).toBe('resume');
@@ -222,6 +274,37 @@ describe('BaseMediaConnection reconnect handling', () => {
     expect(payload.op).toBe(7);
     expect(payload.d.session_id).toBe('session-1');
     expect(streamer.handleConnectionRecoveryRequested).not.toHaveBeenCalled();
+  });
+
+  test('uses rtc server and channel ids for stream identify and resume payloads', () => {
+    const { connection } = createStreamConnection();
+    connection.setSession('session-1');
+    connection.setTokens('stream.discord.test', 'token-1');
+
+    const firstSocket = FakeWebSocket.instances[0];
+    firstSocket?.open();
+
+    const identifyPayload = JSON.parse(String(firstSocket?.sent[0])) as {
+      op: number;
+      d: { server_id: string; channel_id: string };
+    };
+    expect(identifyPayload.op).toBe(0);
+    expect(identifyPayload.d.server_id).toBe('rtc-server-1');
+    expect(identifyPayload.d.channel_id).toBe('rtc-channel-1');
+    expect(connection.daveChannelId).toBe('rtc-channel-1');
+
+    firstSocket?.close(4015, 'server_restart');
+
+    const resumedSocket = FakeWebSocket.instances[1];
+    resumedSocket?.open();
+
+    const resumePayload = JSON.parse(String(resumedSocket?.sent[0])) as {
+      op: number;
+      d: { server_id: string; channel_id: string };
+    };
+    expect(resumePayload.op).toBe(7);
+    expect(resumePayload.d.server_id).toBe('rtc-server-1');
+    expect(resumePayload.d.channel_id).toBe('rtc-channel-1');
   });
 
   test('treats a 4014 close as fatal', () => {
@@ -349,5 +432,17 @@ describe('BaseMediaConnection reconnect handling', () => {
     connection.emit('fatal_disconnect', new AppError('fatal', ExitCode.Gateway));
 
     await expect(wait).rejects.toBeInstanceOf(AppError);
+  });
+
+  test('accepts string media_session_id payloads', () => {
+    const payload: VoiceSelectProtocolAck = {
+      audio_codec: 'opus',
+      video_codec: 'H264',
+      dave_protocol_version: 1,
+      media_session_id: 'media-session-1',
+      sdp: 'v=0',
+    };
+
+    expect(payload.media_session_id).toBe('media-session-1');
   });
 });

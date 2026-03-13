@@ -106,6 +106,10 @@ export abstract class BaseMediaConnection extends EventEmitter {
 
   public abstract get connectionKind(): ConnectionKind;
 
+  protected get voiceGatewayChannelId(): string {
+    return this.channelId;
+  }
+
   public get type(): 'guild' | 'call' {
     return this.guildId ? 'guild' : 'call';
   }
@@ -490,7 +494,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
       user_id: this.userId,
       session_id: this.sessionId,
       token: this.voiceToken,
-      channel_id: this.channelId,
+      channel_id: this.voiceGatewayChannelId,
       video: true,
       streams: streamsSimulcast,
       max_dave_protocol_version: this.dave.MaxSupportedProtocolVersion(),
@@ -507,7 +511,7 @@ export abstract class BaseMediaConnection extends EventEmitter {
       server_id: this.serverId,
       session_id: this.sessionId,
       token: this.voiceToken,
-      channel_id: this.channelId,
+      channel_id: this.voiceGatewayChannelId,
       seq_ack: this.sequenceNumber,
     });
   }
