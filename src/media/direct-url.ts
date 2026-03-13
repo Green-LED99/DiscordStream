@@ -7,6 +7,7 @@ const allowedContentTypes = [
   'video/webm',
   'application/octet-stream',
   'binary/octet-stream',
+  'application/force-download',
 ];
 
 export async function validateDirectMediaUrl(input: string): Promise<URL> {

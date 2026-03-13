@@ -22,6 +22,13 @@ beforeAll(async () => {
       return;
     }
 
+    if (request.url === '/force-download.mp4') {
+      response.statusCode = request.method === 'HEAD' ? 200 : 206;
+      response.setHeader('content-type', 'application/force-download');
+      response.end();
+      return;
+    }
+
     response.statusCode = 404;
     response.end();
   });
@@ -59,5 +66,10 @@ describe('validateDirectMediaUrl', () => {
 
   test('rejects unsupported extensions', async () => {
     await expect(validateDirectMediaUrl(`${baseUrl}/file.txt`)).rejects.toBeInstanceOf(AppError);
+  });
+
+  test('accepts direct mp4 URLs that resolve as force-download content', async () => {
+    const url = await validateDirectMediaUrl(`${baseUrl}/force-download.mp4`);
+    expect(url.toString()).toBe(`${baseUrl}/force-download.mp4`);
   });
 });
