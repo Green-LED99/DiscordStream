@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DaveModule } from '../src/dave/types.js';
 import type { Streamer } from '../src/discord/streamer.js';
-import { BaseMediaConnection } from '../src/discord/voice/base-media-connection.js';
 import type { VoiceSelectProtocolAck } from '../src/discord/voice-types.js';
+import { BaseMediaConnection } from '../src/discord/voice/base-media-connection.js';
 import { classifyVoiceCloseCode } from '../src/discord/voice/reconnect.js';
 import type { ConnectionKind } from '../src/discord/voice/reconnect.js';
 import { AppError, ExitCode } from '../src/errors.js';
