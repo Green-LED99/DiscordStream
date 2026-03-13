@@ -18,7 +18,8 @@
     "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:libdave": "node ./scripts/build-libdave.mjs"
+    "build:libdave": "node ./scripts/build-libdave.mjs",
+    "verify:libdave": "node ./scripts/verify-libdave-module.mjs"
   },
   "dependencies": {
     "@lng2004/node-datachannel": "0.32.0-20260202",

@@ -38,6 +38,7 @@ async function main() {
   const emcmake = path.join(process.env.EMSDK, 'upstream', 'emscripten', 'emcmake');
 
   await rm(sourceDir, { recursive: true, force: true });
+  await rm(outputDir, { recursive: true, force: true });
   await mkdir(path.dirname(sourceDir), { recursive: true });
   await mkdir(outputDir, { recursive: true });
 
@@ -60,6 +61,7 @@ async function main() {
     path.join(sourceDir, 'cpp', 'build', 'libdave.d.ts'),
     path.join(outputDir, 'libdave.d.ts')
   );
+  await run(process.execPath, ['scripts/verify-libdave-module.mjs'], rootDir);
 }
 
 main().catch((error) => {
