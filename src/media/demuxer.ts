@@ -196,12 +196,18 @@ export async function demuxNutStream(
 
   const packetIterator = demuxer.packets();
 
-  const cleanup = (): void => {
+  const cleanup = (error?: Error): void => {
     for (const filter of videoFilters) {
       filter.close();
     }
 
     demuxer.close();
+    if (error) {
+      videoPipe.destroy(error);
+      audioPipe.destroy(error);
+      return;
+    }
+
     videoPipe.end();
     audioPipe.end();
   };
@@ -250,10 +256,18 @@ export async function demuxNutStream(
         packet.free();
       }
     } catch (error) {
+      const mediaError =
+        error instanceof AppError
+          ? error
+          : new AppError('Failed to demux the NUT media stream.', ExitCode.Media, {
+              message: error instanceof Error ? error.message : String(error),
+            });
       logger.error('NUT demux failed', {
-        message: error instanceof Error ? error.message : String(error),
+        message: mediaError.message,
+        exitCode: mediaError.exitCode,
+        details: mediaError.details,
       });
-      cleanup();
+      cleanup(mediaError);
     }
   })();
 

@@ -42,30 +42,49 @@ export async function playStream(
       connection.mediaConnection.setVideoAttributes(false);
     };
 
+    const onSourceError = (error: Error) => {
+      cleanup();
+      abortSignal?.removeEventListener('abort', onAbort);
+      video.stream.off('error', onSourceError);
+      audio?.stream.off('error', onSourceError);
+      streamer.offFatal(onFatal);
+      reject(error);
+    };
+
     const onFatal = (error: Error) => {
       cleanup();
       abortSignal?.removeEventListener('abort', onAbort);
+      video.stream.off('error', onSourceError);
+      audio?.stream.off('error', onSourceError);
       streamer.offFatal(onFatal);
       reject(error);
     };
 
     const onAbort = () => {
       cleanup();
+      video.stream.off('error', onSourceError);
+      audio?.stream.off('error', onSourceError);
       streamer.offFatal(onFatal);
       reject(abortSignal?.reason ?? new Error('Aborted'));
     };
 
     abortSignal?.addEventListener('abort', onAbort, { once: true });
     streamer.onFatal(onFatal);
+    video.stream.once('error', onSourceError);
+    audio?.stream.once('error', onSourceError);
     videoStream.once('finish', () => {
       cleanup();
       abortSignal?.removeEventListener('abort', onAbort);
+      video.stream.off('error', onSourceError);
+      audio?.stream.off('error', onSourceError);
       streamer.offFatal(onFatal);
       resolve();
     });
     videoStream.once('error', (error) => {
       cleanup();
       abortSignal?.removeEventListener('abort', onAbort);
+      video.stream.off('error', onSourceError);
+      audio?.stream.off('error', onSourceError);
       streamer.offFatal(onFatal);
       reject(error);
     });
