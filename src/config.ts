@@ -1,27 +1,24 @@
 import { config as loadDotEnv } from 'dotenv';
-import { AppError, ExitCode } from './errors.js';
+import {
+  type CompanionTokenProviderConfig,
+  parseCompanionTokenProviderConfig,
+} from './companion-token-provider.js';
 import { type LogLevel, parseLogLevel } from './logging.js';
 
 loadDotEnv();
 
 export type AppConfig = {
-  companionToken: string;
+  companionTokenProvider: CompanionTokenProviderConfig;
   ffmpegPath: string;
   ffprobePath: string;
   logLevel: LogLevel;
 };
 
-export function loadConfig(): AppConfig {
-  const companionToken = process.env.DISCORD_COMPANION_TOKEN;
-
-  if (!companionToken) {
-    throw new AppError('DISCORD_COMPANION_TOKEN is required.', ExitCode.Config);
-  }
-
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
-    companionToken,
-    ffmpegPath: process.env.FFMPEG_PATH || 'ffmpeg',
-    ffprobePath: process.env.FFPROBE_PATH || 'ffprobe',
-    logLevel: parseLogLevel(process.env.LOG_LEVEL),
+    companionTokenProvider: parseCompanionTokenProviderConfig(env),
+    ffmpegPath: env.FFMPEG_PATH || 'ffmpeg',
+    ffprobePath: env.FFPROBE_PATH || 'ffprobe',
+    logLevel: parseLogLevel(env.LOG_LEVEL),
   };
 }

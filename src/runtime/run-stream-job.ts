@@ -1,3 +1,4 @@
+import { resolveCompanionToken } from '../companion-token-provider.js';
 import { loadConfig } from '../config.js';
 import type { StreamJobSpec } from '../contracts.js';
 import { loadDaveModule } from '../dave/libdave.js';
@@ -49,8 +50,9 @@ export async function runStreamJob(spec: StreamJobSpec): Promise<void> {
       streamCount: mediaInfo.streams.length,
     });
 
+    const companionToken = await resolveCompanionToken(config.companionTokenProvider);
     gatewaySession = createUserGatewaySession(logger.child('gateway'));
-    await gatewaySession.login(config.companionToken);
+    await gatewaySession.login(companionToken);
 
     const currentUser = gatewaySession.currentUser();
     if (!currentUser) {
