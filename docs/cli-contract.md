@@ -41,7 +41,7 @@ On failure:
 
 ## Event Meanings
 
-- `authenticating`: config loaded and the worker is starting Discord login
+- `authenticating`: config loaded and the worker is starting the job; companion token resolution and Discord login happen after this event
 - `resolved_media`: the media URL was accepted and `ffprobe` returned stream metadata
 - `joining_voice`: the companion user is authenticated and the worker is joining voice
 - `starting_stream`: the worker has a voice transport and has started feeding `ffmpeg` output into the transport

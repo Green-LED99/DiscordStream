@@ -2,10 +2,23 @@
 
 ## Required Environment
 
-- `DISCORD_COMPANION_TOKEN`
+- One companion token source:
+  - `DISCORD_COMPANION_TOKEN`
+  - `DISCORD_COMPANION_TOKEN_FILE`
+  - `DISCORD_COMPANION_TOKEN_COMMAND`
+- Optional `DISCORD_COMPANION_TOKEN_PROVIDER`
+- Optional `DISCORD_COMPANION_TOKEN_COMMAND_TIMEOUT_MS`
 - `LOG_LEVEL`
 - optional `FFMPEG_PATH`
 - optional `FFPROBE_PATH`
+
+Provider behavior:
+
+- `env`: reads the token directly from `DISCORD_COMPANION_TOKEN`
+- `file`: reads a UTF-8 token file and trims it
+- `command`: executes `/bin/sh -lc` and reads trimmed `stdout`
+- token resolution happens once per job, immediately before Gateway login
+- if more than one source variable is present, set `DISCORD_COMPANION_TOKEN_PROVIDER` explicitly
 
 ## Packaging
 
@@ -19,7 +32,10 @@ Build and run:
 ```bash
 docker build -t discord-stream:local .
 docker run --rm \
-  --env-file .env \
+  -e DISCORD_COMPANION_TOKEN_PROVIDER=file \
+  -e DISCORD_COMPANION_TOKEN_FILE=/run/secrets/discord-companion-token.txt \
+  -e LOG_LEVEL=info \
+  -v "$(pwd)/.secrets:/run/secrets:ro" \
   discord-stream:local \
   play-url \
   --guild-id 123 \
@@ -68,7 +84,8 @@ colima stop
 
 ## Failure Modes
 
-- Authentication failures typically mean the companion token is invalid or Discord exposed a bot identity.
+- Configuration failures typically mean no token source was configured, multiple token sources were configured without an explicit provider selector, or the file/command provider returned no token.
+- Authentication failures typically mean the resolved companion token is invalid or Discord exposed a bot identity.
 - Gateway failures now include explicit join reason codes such as `join_timeout_no_gateway_response`, `join_timeout_missing_voice_state`, `join_timeout_missing_voice_server`, and `stream_delete:*`.
 - DAVE failures usually mean missing `libdave` artifacts or voice-gateway negotiation problems.
 - Transport failures typically happen when WebRTC negotiation or RTP packetization fails.
@@ -83,7 +100,7 @@ colima stop
 
 ## Operational Procedure
 
-1. Ensure `DISCORD_COMPANION_TOKEN` is present.
+1. Ensure exactly one companion token source is present.
 2. Build the image.
 3. Start one container per stream job.
 4. Parse lifecycle JSON from `stdout`.
@@ -93,3 +110,5 @@ colima stop
 ## Operational Warning
 
 This app intentionally uses a separate companion user client because v1 does not assume Discord bot-token video streaming is available. That is an operational and policy risk that must be managed by the operator.
+
+This worker does not implement username/password login, OAuth2 bearer auth, or in-process token refresh. Rotate the token in the external source and start a new worker process to pick it up.

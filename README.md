@@ -6,7 +6,7 @@ This README is written for AI agents first. It describes what is actually implem
 
 ## What This Repository Does
 
-- Authenticates with `DISCORD_COMPANION_TOKEN`
+- Resolves a companion user token from `env`, `file`, or `command` provider config
 - Opens a custom Discord user gateway session
 - Joins a guild voice channel through the documented `VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE` handshake
 - Creates a Go Live stream through the documented `STREAM_CREATE` + `STREAM_SERVER_UPDATE` handshake
@@ -42,32 +42,73 @@ Not supported:
 If you are another agent and need the shortest reliable path, use Docker first.
 
 1. Create `.env` from [`.env.example`](/Users/harrisonpope/Desktop/DiscordStream/.env.example).
-2. Set `DISCORD_COMPANION_TOKEN`.
+2. Choose exactly one companion token source.
 3. Build the image.
 4. Run one `play-url` job.
 5. Watch `stdout` JSON for lifecycle state and `stderr` for diagnostics.
 
 ## Required Environment
 
-From [src/config.ts](/Users/harrisonpope/Desktop/DiscordStream/src/config.ts):
+From [src/config.ts](/Users/harrisonpope/Desktop/DiscordStream/src/config.ts) and [src/companion-token-provider.ts](/Users/harrisonpope/Desktop/DiscordStream/src/companion-token-provider.ts):
 
-- `DISCORD_COMPANION_TOKEN` required
+- Exactly one companion token source must be configured:
+  - `DISCORD_COMPANION_TOKEN`
+  - `DISCORD_COMPANION_TOKEN_FILE`
+  - `DISCORD_COMPANION_TOKEN_COMMAND`
+- `DISCORD_COMPANION_TOKEN_PROVIDER` optional, but required if more than one source variable is present
+- `DISCORD_COMPANION_TOKEN_COMMAND_TIMEOUT_MS` optional, defaults to `5000`
 - `LOG_LEVEL` optional, defaults to `info`
 - `FFMPEG_PATH` optional, defaults to `ffmpeg`
 - `FFPROBE_PATH` optional, defaults to `ffprobe`
 
+Provider rules:
+
+- `env`: reads `DISCORD_COMPANION_TOKEN`
+- `file`: reads a UTF-8 token file from `DISCORD_COMPANION_TOKEN_FILE`
+- `command`: runs `/bin/sh -lc "$DISCORD_COMPANION_TOKEN_COMMAND"` and reads trimmed `stdout`
+- token resolution happens once per stream job, immediately before Discord Gateway login
+- the worker does not implement username/password login, OAuth2 bearer auth, or mid-run token refresh
+
+Recommended defaults:
+
+- Local development: `env`
+- Docker or deployed runs: `file`
+- Secret-manager integration: `command`
+
 Example [`.env`](/Users/harrisonpope/Desktop/DiscordStream/.env):
 
 ```dotenv
+DISCORD_COMPANION_TOKEN_PROVIDER=env
 DISCORD_COMPANION_TOKEN=your_user_token_here
 LOG_LEVEL=debug
 FFMPEG_PATH=ffmpeg
 FFPROBE_PATH=ffprobe
 ```
 
+Example file-backed config:
+
+```dotenv
+DISCORD_COMPANION_TOKEN_PROVIDER=file
+DISCORD_COMPANION_TOKEN_FILE=.secrets/discord-companion-token.txt
+LOG_LEVEL=info
+FFMPEG_PATH=ffmpeg
+FFPROBE_PATH=ffprobe
+```
+
+Example command-backed config:
+
+```dotenv
+DISCORD_COMPANION_TOKEN_PROVIDER=command
+DISCORD_COMPANION_TOKEN_COMMAND=security find-generic-password -a discord-stream -s companion-token -w
+DISCORD_COMPANION_TOKEN_COMMAND_TIMEOUT_MS=5000
+LOG_LEVEL=info
+FFMPEG_PATH=ffmpeg
+FFPROBE_PATH=ffprobe
+```
+
 ## Docker Path
 
-The Docker image now includes `ffmpeg` and `ffprobe` in the runtime layer, so the containerized path is self-contained apart from the token and the media URL.
+The Docker image now includes `ffmpeg` and `ffprobe` in the runtime layer, so the containerized path is self-contained apart from the token source and the media URL.
 
 Build:
 
@@ -80,6 +121,25 @@ Run:
 ```bash
 docker run --rm \
   --env-file .env \
+  discord-stream:local \
+  play-url \
+  --guild-id 123456789012345678 \
+  --channel-id 234567890123456789 \
+  --url https://example.com/video.mp4 \
+  --json
+```
+
+Recommended Docker secret path:
+
+```bash
+mkdir -p .secrets
+printf '%s\n' "$DISCORD_COMPANION_TOKEN" > .secrets/discord-companion-token.txt
+
+docker run --rm \
+  -e DISCORD_COMPANION_TOKEN_PROVIDER=file \
+  -e DISCORD_COMPANION_TOKEN_FILE=/run/secrets/discord-companion-token.txt \
+  -e LOG_LEVEL=info \
+  -v "$(pwd)/.secrets:/run/secrets:ro" \
   discord-stream:local \
   play-url \
   --guild-id 123456789012345678 \
@@ -125,6 +185,8 @@ node dist/src/cli.js play-url \
 ```
 
 `npm run build:libdave` clones the official `discord/libdave` repo and writes artifacts into [vendor/libdave](/Users/harrisonpope/Desktop/DiscordStream/vendor/libdave). The runtime loader in [src/dave/libdave.ts](/Users/harrisonpope/Desktop/DiscordStream/src/dave/libdave.ts) requires `libdave.js` and `libdave.wasm` to exist there.
+
+When you rotate the companion token, start a new worker process. The worker resolves the token once per job and does not re-read it during reconnects.
 
 ## CLI Contract
 

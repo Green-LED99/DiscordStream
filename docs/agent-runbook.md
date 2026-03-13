@@ -16,10 +16,22 @@ Only direct file URLs are in scope. Reject YouTube pages, HLS manifests, generic
 
 ## Required Environment
 
-- `DISCORD_COMPANION_TOKEN`
+- One companion token source:
+  - `DISCORD_COMPANION_TOKEN`
+  - `DISCORD_COMPANION_TOKEN_FILE`
+  - `DISCORD_COMPANION_TOKEN_COMMAND`
+- Optional `DISCORD_COMPANION_TOKEN_PROVIDER`
+- Optional `DISCORD_COMPANION_TOKEN_COMMAND_TIMEOUT_MS`
 - `LOG_LEVEL`
 - Optional `FFMPEG_PATH`
 - Optional `FFPROBE_PATH`
+
+Selection rules:
+
+- If `DISCORD_COMPANION_TOKEN_PROVIDER` is set, the matching source variable must also be set.
+- If the selector is unset, the worker infers the provider only when exactly one source variable is present.
+- File paths resolve relative to the current working directory.
+- Command providers run through `/bin/sh -lc` and use trimmed `stdout` only.
 
 The token must belong to a companion user account. If Discord exposes the identity as a bot user, the process exits with code `20`.
 
@@ -31,6 +43,8 @@ The token must belong to a companion user account. If Discord exposes the identi
 npm install
 npm run build:libdave
 npm run build
+export DISCORD_COMPANION_TOKEN_PROVIDER=env
+export DISCORD_COMPANION_TOKEN=your_user_token_here
 node dist/src/cli.js play-url \
   --guild-id 123 \
   --channel-id 456 \
@@ -43,7 +57,10 @@ node dist/src/cli.js play-url \
 ```bash
 docker build -t discord-stream:local .
 docker run --rm \
-  --env-file .env \
+  -e DISCORD_COMPANION_TOKEN_PROVIDER=file \
+  -e DISCORD_COMPANION_TOKEN_FILE=/run/secrets/discord-companion-token.txt \
+  -e LOG_LEVEL=info \
+  -v "$(pwd)/.secrets:/run/secrets:ro" \
   discord-stream:local \
   play-url \
   --guild-id 123 \
@@ -59,6 +76,7 @@ docker run --rm \
 - Parse `stdout` only for job state.
 - Preserve `stderr` for debugging, but do not treat it as the contract surface.
 - Join diagnostics now appear on `stderr` with explicit handshake milestones and reconnect attempts.
+- `authenticating` is emitted before the worker resolves the companion token and starts Discord login.
 
 Expected lifecycle events:
 
@@ -94,10 +112,11 @@ Common `failed.details.reason` values on exit code `30`:
 
 1. Validate that the requested URL is a direct `.mp4` or `.mkv` link before invoking the worker.
 2. Start one worker process for one stream request.
-3. Read `stdout` line by line and parse JSON.
-4. If a `failed` event arrives, stop waiting and surface `details.message` plus `details.exitCode`.
-5. If the process exits with `0`, treat the stream as completed.
-6. If the user cancels, send `SIGTERM` and wait for process exit.
+3. Ensure exactly one companion token source is configured before launching the worker.
+4. Read `stdout` line by line and parse JSON.
+5. If a `failed` event arrives, stop waiting and surface `details.message` plus `details.exitCode`.
+6. If the process exits with `0`, treat the stream as completed.
+7. If the user cancels, send `SIGTERM` and wait for process exit.
 
 ## Example Host Wrapper
 
@@ -134,6 +153,7 @@ function stopStream() {
 - Default transcode profile: `H.264 + Opus`, `720p24`.
 - DAVE is attempted first. If Discord negotiates protocol version `0`, the worker downgrades to passthrough mode.
 - The worker owns its own user gateway session and does not depend on `discord.js-selfbot-v13`.
+- The worker resolves the companion token once per job, immediately before Gateway login.
 - The worker exits after stream completion, failure, or signal-triggered shutdown.
 
 ## When Not To Use This Worker
