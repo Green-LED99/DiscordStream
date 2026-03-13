@@ -43,7 +43,6 @@ The token must belong to a companion user account. If Discord exposes the identi
 npm install
 npm run build:libdave
 npm run build
-node scripts/verify-libdave-module.mjs
 export DISCORD_COMPANION_TOKEN_PROVIDER=env
 export DISCORD_COMPANION_TOKEN=your_user_token_here
 node dist/src/cli.js play-url \
@@ -53,7 +52,7 @@ node dist/src/cli.js play-url \
   --json
 ```
 
-`npm run build:libdave` patches the cloned `discord/libdave` source before `make wasm` so the generated module exposes `HEAPU8` and `wasmMemory`. If `EMSDK` is not available, stop there and report that the DAVE runtime is blocked until the build can run.
+`npm run build:libdave` patches the cloned `discord/libdave` source before the upstream wasm configure/build commands run, then automatically verifies the rebuilt module exports `HEAPU8`, `wasmMemory`, `_malloc`, `_free`, and the DAVE constructors. If `HEAPU8` is missing, diagnose it as a libdave artifact/build problem before investigating MLS or voice state. If `EMSDK` is not available, stop there and report that the DAVE runtime is blocked until the build can run.
 
 ### Docker
 

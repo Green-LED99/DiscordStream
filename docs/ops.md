@@ -87,7 +87,7 @@ colima stop
 - Configuration failures typically mean no token source was configured, multiple token sources were configured without an explicit provider selector, or the file/command provider returned no token.
 - Authentication failures typically mean the resolved companion token is invalid or Discord exposed a bot identity.
 - Gateway failures now include explicit join reason codes such as `join_timeout_no_gateway_response`, `join_timeout_missing_voice_state`, `join_timeout_missing_voice_server`, and `stream_delete:*`.
-- DAVE failures usually mean missing `libdave` artifacts or voice-gateway negotiation problems.
+- DAVE failures should be split in two buckets: missing `HEAPU8` / `wasmMemory` means the `libdave` artifact is wrong and `npm run build:libdave` / `npm run verify:libdave` must be checked first; only after the artifact shape is healthy should voice-gateway or MLS/DAVE negotiation be investigated.
 - Transport failures typically happen when WebRTC negotiation or RTP packetization fails.
 - Media failures usually mean the URL is not a direct file URL or the host blocked `HEAD` and range requests.
 
