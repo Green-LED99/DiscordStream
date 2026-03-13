@@ -2,7 +2,11 @@ import { spawn } from 'node:child_process';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { patchLibdaveCMakeLists } from './libdave-build-utils.mjs';
+import {
+  getLibdaveWasmBuildArgs,
+  getLibdaveWasmConfigureArgs,
+  patchLibdaveCMakeLists,
+} from './libdave-build-utils.mjs';
 
 const rootDir = process.cwd();
 const sourceDir = path.join(rootDir, 'vendor', 'libdave-src');
@@ -31,6 +35,7 @@ async function main() {
   if (!process.env.EMSDK) {
     throw new Error('EMSDK must be set before running build-libdave.');
   }
+  const emcmake = path.join(process.env.EMSDK, 'upstream', 'emscripten', 'emcmake');
 
   await rm(sourceDir, { recursive: true, force: true });
   await mkdir(path.dirname(sourceDir), { recursive: true });
@@ -43,7 +48,8 @@ async function main() {
   );
   await patchLibdaveCMakeLists(sourceDir);
   await run('git', ['submodule', 'update', '--init', '--recursive'], sourceDir);
-  await run('make', ['wasm'], path.join(sourceDir, 'cpp'));
+  await run(emcmake, getLibdaveWasmConfigureArgs(process.env.EMSDK), path.join(sourceDir, 'cpp'));
+  await run('cmake', getLibdaveWasmBuildArgs(), path.join(sourceDir, 'cpp'));
 
   await cp(path.join(sourceDir, 'cpp', 'build', 'libdave.js'), path.join(outputDir, 'libdave.js'));
   await cp(
