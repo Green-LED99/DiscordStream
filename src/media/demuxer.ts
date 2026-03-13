@@ -33,6 +33,37 @@ type PacketLike = {
   free(): void;
 };
 
+type VideoCodecParametersLike = {
+  width?: number;
+  height?: number;
+  frameRate: { num: number; den: number };
+};
+
+type BitstreamFilterInputLike = {
+  codecpar: unknown;
+  timeBase: unknown;
+};
+
+type BitstreamFilterLike = {
+  outputCodecParameters?: unknown;
+  outputTimeBase?: unknown;
+  filterAll(packet: PacketLike | null): Promise<(PacketLike | null)[]>;
+  close(): void;
+};
+
+type BitstreamFilterFactoryLike = {
+  create(
+    name: string,
+    stream: BitstreamFilterInputLike,
+    options?: { options?: Record<string, string> }
+  ): BitstreamFilterLike;
+};
+
+type BitstreamFilterDefinition = {
+  name: string;
+  options?: Record<string, string>;
+};
+
 function parseOpusPacketDuration(frame: Uint8Array): number {
   const firstByte = frame[0] ?? 0;
   const secondByte = frame[1] ?? 0;
@@ -72,6 +103,10 @@ export async function demuxNutStream(
             width?: number;
             height?: number;
             frameRate: { num: number; den: number };
+          };
+          timeBase: {
+            num: number;
+            den: number;
           };
         } | null;
         audio(): {
@@ -136,18 +171,26 @@ export async function demuxNutStream(
     });
   }
 
-  const videoFilters = [
-    imported.BitStreamFilterAPI.create('h264_mp4toannexb', videoSource),
-    imported.BitStreamFilterAPI.create('h264_metadata', videoSource, {
-      options: {
-        aud: 'remove',
+  const videoFilters = createChainedBitstreamFilters(
+    imported.BitStreamFilterAPI,
+    {
+      codecpar: videoSource.codecpar,
+      timeBase: videoSource.timeBase,
+    },
+    [
+      { name: 'h264_mp4toannexb' },
+      {
+        name: 'h264_metadata',
+        options: {
+          aud: 'remove',
+        },
       },
-    }),
-    imported.BitStreamFilterAPI.create('dump_extra', videoSource),
-  ];
+      { name: 'dump_extra' },
+    ]
+  );
 
-  const filteredCodecParameters =
-    videoFilters.at(-1)?.outputCodecParameters ?? videoSource.codecpar;
+  const filteredCodecParameters = (videoFilters.at(-1)?.outputCodecParameters ??
+    videoSource.codecpar) as VideoCodecParametersLike;
   const videoPipe = new PassThrough({ objectMode: true, highWaterMark: 64 });
   const audioPipe = new PassThrough({ objectMode: true, highWaterMark: 64 });
 
@@ -236,8 +279,31 @@ export async function demuxNutStream(
   return audio ? { video, audio } : { video };
 }
 
+export function createChainedBitstreamFilters(
+  factory: BitstreamFilterFactoryLike,
+  initialStream: BitstreamFilterInputLike,
+  definitions: BitstreamFilterDefinition[]
+): BitstreamFilterLike[] {
+  let currentStream = initialStream;
+
+  return definitions.map((definition) => {
+    const filter = factory.create(
+      definition.name,
+      currentStream,
+      definition.options ? { options: definition.options } : undefined
+    );
+
+    currentStream = {
+      codecpar: filter.outputCodecParameters ?? currentStream.codecpar,
+      timeBase: filter.outputTimeBase ?? currentStream.timeBase,
+    };
+
+    return filter;
+  });
+}
+
 async function applyBitstreamFilters(
-  filters: { filterAll(packet: PacketLike | null): Promise<(PacketLike | null)[]> }[],
+  filters: Pick<BitstreamFilterLike, 'filterAll'>[],
   input: PacketLike | null
 ): Promise<(PacketLike | null)[]> {
   let packets: (PacketLike | null)[] = [input];
