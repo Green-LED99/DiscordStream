@@ -72,7 +72,10 @@ export class StreamJoinCoordinator {
           message: lastError.message,
           details: lastError.details,
         });
-        if (String(lastError.details?.reason).startsWith('stream_delete:')) {
+        if (
+          String(lastError.details?.reason).startsWith('stream_delete:') &&
+          lastError.details?.unavailable !== true
+        ) {
           throw lastError;
         }
         if (attempt < initialAttempts) {
@@ -163,13 +166,14 @@ export class StreamJoinCoordinator {
       return;
     }
 
-    const reason = payload.d.reason ?? 'unknown';
+    const reason = payload.d.unavailable ? 'unavailable' : (payload.d.reason ?? 'unknown');
     this.handshake.deletedReason = reason;
     this.handshake.state = 'failed';
     this.logger.warn('Stream delete received', {
       guildId: this.guildId,
       channelId: this.channelId,
       reason,
+      unavailable: payload.d.unavailable ?? false,
     });
 
     if (!this.pendingAttempt) {
@@ -185,6 +189,7 @@ export class StreamJoinCoordinator {
         channelId: this.channelId,
         reason: `stream_delete:${reason}`,
         deletedReason: reason,
+        unavailable: payload.d.unavailable ?? false,
       })
     );
   }
@@ -299,6 +304,7 @@ export class StreamJoinCoordinator {
       sawStreamServer: this.handshake.sawStreamServer,
       sawNullEndpoint: this.handshake.sawNullEndpoint,
       ...(this.handshake.deletedReason ? { deletedReason: this.handshake.deletedReason } : {}),
+      ...(this.handshake.deletedReason === 'unavailable' ? { unavailable: true } : {}),
     };
 
     return new AppError(

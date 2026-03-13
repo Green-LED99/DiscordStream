@@ -414,6 +414,22 @@ export class Streamer {
       return;
     }
 
+    if (payload.d.unavailable) {
+      this.logger.warn('Stream became unavailable; attempting recovery', {
+        guildId: this.desiredStream.guildId,
+        channelId: this.desiredStream.channelId,
+        streamKey: payload.d.stream_key,
+      });
+      this.streamConnection.prepareForServerReallocation();
+      this.handleConnectionRecoveryRequested(this.streamConnection, {
+        connectionKind: 'stream',
+        attempt: this.runtimeRecoveryCount,
+        trigger: 'stream_delete',
+        state: 'refreshing',
+      });
+      return;
+    }
+
     this.handleConnectionFatal(
       this.streamConnection,
       new AppError('Discord deleted the active Go Live stream.', ExitCode.Gateway, {

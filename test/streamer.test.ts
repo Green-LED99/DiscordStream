@@ -489,4 +489,98 @@ describe('Streamer', () => {
     expect(nextVoiceConnection.prepareForServerReallocation).toHaveBeenCalledTimes(1);
     expect(nextVoiceConnection.setTokens).not.toHaveBeenCalled();
   });
+
+  test('recovers when Discord marks the active stream unavailable', async () => {
+    const session = createSession();
+    const fatalListener = vi.fn();
+
+    const { Streamer } = await import('../src/discord/streamer.js');
+    const streamer = new Streamer(session as never, {} as never, new Logger('test', 'debug'));
+    streamer.onFatal(fatalListener);
+
+    const joinPromise = streamer.joinVoice('guild-1', 'channel-1');
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'VOICE_STATE_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        user_id: 'user-1',
+        session_id: 'voice-session',
+      },
+    });
+    session.emitRaw({
+      t: 'VOICE_SERVER_UPDATE',
+      d: {
+        guild_id: 'guild-1',
+        channel_id: 'channel-1',
+        endpoint: 'voice.discord.test',
+        token: 'voice-token',
+      },
+    });
+    await joinPromise;
+
+    const streamPromise = streamer.createStream();
+    await Promise.resolve();
+    session.emitRaw({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '777',
+      },
+    });
+    session.emitRaw({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream.discord.test',
+        token: 'stream-token',
+      },
+    });
+    await streamPromise;
+
+    session.sendGatewayOpcode.mockClear();
+    nextStreamConnection.prepareForServerReallocation.mockClear();
+    nextStreamConnection.prepareForReconnect.mockClear();
+
+    session.emitRaw({
+      t: 'STREAM_DELETE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        unavailable: true,
+      },
+    });
+    await Promise.resolve();
+
+    session.emitRaw({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '888',
+      },
+    });
+    session.emitRaw({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream-recovered.discord.test',
+        token: 'stream-token-2',
+      },
+    });
+    await Promise.resolve();
+
+    expect(nextStreamConnection.prepareForServerReallocation).toHaveBeenCalledTimes(1);
+    expect(nextStreamConnection.prepareForReconnect).toHaveBeenCalledTimes(1);
+    expect(session.sendGatewayOpcode).toHaveBeenCalledWith(18, {
+      type: 'guild',
+      guild_id: 'guild-1',
+      channel_id: 'channel-1',
+      preferred_region: null,
+    });
+    expect(session.sendGatewayOpcode).toHaveBeenCalledWith(22, {
+      stream_key: 'guild:guild-1:channel-1:user-1',
+      paused: false,
+    });
+    expect(fatalListener).not.toHaveBeenCalled();
+  });
 });

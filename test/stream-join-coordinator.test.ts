@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { StreamJoinCoordinator } from '../src/discord/join/stream-join-coordinator.js';
 import { Logger } from '../src/logging.js';
 
@@ -22,6 +22,10 @@ function createConnection() {
 describe('StreamJoinCoordinator', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   test('connects after stream create and stream server update arrive', async () => {
@@ -96,6 +100,54 @@ describe('StreamJoinCoordinator', () => {
         reason: 'stream_delete:stream_full',
       }),
     });
+  });
+
+  test('retries when stream creation becomes temporarily unavailable', async () => {
+    vi.useFakeTimers();
+    const session = createSession();
+    const connection = createConnection();
+    const coordinator = new StreamJoinCoordinator(
+      session as never,
+      connection as never,
+      new Logger('test', 'debug'),
+      'guild-1',
+      'channel-1',
+      'user-1',
+      () => 'voice-session',
+      { initialAttempts: 2, handshakeTimeoutMs: 25 }
+    );
+
+    const promise = coordinator.connectInitial();
+    await Promise.resolve();
+
+    coordinator.handleStreamDelete({
+      t: 'STREAM_DELETE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        unavailable: true,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    coordinator.handleStreamCreate({
+      t: 'STREAM_CREATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        rtc_server_id: '777',
+      },
+    });
+    coordinator.handleStreamServerUpdate({
+      t: 'STREAM_SERVER_UPDATE',
+      d: {
+        stream_key: 'guild:guild-1:channel-1:user-1',
+        endpoint: 'stream.discord.test',
+        token: 'stream-token',
+      },
+    });
+
+    await expect(promise).resolves.toEqual({ mediaConnection: 'stream' });
+    expect(session.sendGatewayOpcode).toHaveBeenCalledTimes(4);
   });
 
   test('waits for a replacement stream endpoint after a null server update', async () => {

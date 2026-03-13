@@ -7,6 +7,7 @@ export type JoinFailureReason =
   | 'stream_delete:stream_full'
   | 'stream_delete:unauthorized'
   | 'stream_delete:invalid_channel'
+  | 'stream_delete:unavailable'
   | 'stream_delete:unknown'
   | `stream_delete:${string}`;
 
@@ -20,6 +21,7 @@ export type JoinAttemptDiagnostics = {
   sawStreamServer?: boolean;
   lastChannelId?: string | null;
   deletedReason?: string;
+  unavailable?: boolean;
 };
 
 export type VoiceJoinState =

@@ -1,6 +1,10 @@
 export type ConnectionKind = 'voice' | 'stream';
 export type ReconnectState = 'idle' | 'resuming' | 'refreshing' | 'failed';
-export type RecoveryTrigger = 'socket_close' | 'heartbeat_timeout' | 'voice_state_update';
+export type RecoveryTrigger =
+  | 'socket_close'
+  | 'heartbeat_timeout'
+  | 'voice_state_update'
+  | 'stream_delete';
 export type CloseClassification = 'resume' | 'refresh' | 'fatal';
 
 export type ReconnectDiagnostics = {
