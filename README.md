@@ -172,6 +172,7 @@ Build:
 npm install
 npm run build:libdave
 npm run build
+node scripts/verify-libdave-module.mjs
 ```
 
 Run:
@@ -184,7 +185,9 @@ node dist/src/cli.js play-url \
   --json
 ```
 
-`npm run build:libdave` clones the official `discord/libdave` repo and writes artifacts into [vendor/libdave](/Users/harrisonpope/Desktop/DiscordStream/vendor/libdave). The runtime loader in [src/dave/libdave.ts](/Users/harrisonpope/Desktop/DiscordStream/src/dave/libdave.ts) requires `libdave.js` and `libdave.wasm` to exist there.
+`npm run build:libdave` clones the official `discord/libdave` repo, patches its `cpp/CMakeLists.txt` to export `HEAPU8` and `wasmMemory`, and writes artifacts into [vendor/libdave](/Users/harrisonpope/Desktop/DiscordStream/vendor/libdave). The runtime loader in [src/dave/libdave.ts](/Users/harrisonpope/Desktop/DiscordStream/src/dave/libdave.ts) requires `libdave.js` and `libdave.wasm` to exist there.
+
+Run `node scripts/verify-libdave-module.mjs` after the build to confirm the generated module exposes `HEAPU8`, `wasmMemory`, `_malloc`, `_free`, and the encryptor/decryptor/session constructors. If `EMSDK` is missing, `npm run build:libdave` cannot run and the DAVE runtime remains blocked.
 
 When you rotate the companion token, start a new worker process. The worker resolves the token once per job and does not re-read it during reconnects.
 

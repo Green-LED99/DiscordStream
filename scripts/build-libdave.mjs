@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { patchLibdaveCMakeLists } from './libdave-build-utils.mjs';
 
 const rootDir = process.cwd();
 const sourceDir = path.join(rootDir, 'vendor', 'libdave-src');
@@ -40,6 +41,7 @@ async function main() {
     ['clone', '--depth=1', 'https://github.com/discord/libdave.git', sourceDir],
     rootDir
   );
+  await patchLibdaveCMakeLists(sourceDir);
   await run('git', ['submodule', 'update', '--init', '--recursive'], sourceDir);
   await run('make', ['wasm'], path.join(sourceDir, 'cpp'));
 
